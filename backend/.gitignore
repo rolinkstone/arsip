@@ -1,0 +1,14 @@
+# Secret / konfigurasi lingkungan — JANGAN pernah di-commit
+# (berisi KEYCLOAK_CLIENT_SECRET, password DB, dsb.)
+.env
+.env.*
+!.env.example
+
+# Upload runtime (isi folder diabaikan, folder tetap ada)
+/uploads/*
+!/uploads/.gitkeep
+
+# Dependency & log
+/node_modules
+*.log
+npm-debug.log*

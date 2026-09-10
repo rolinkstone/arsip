@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Silent Check SSO</title>
+    <script>
+        // Script untuk handle silent check SSO dari Keycloak
+        (function() {
+            var state = null;
+            var code = null;
+            var sessionState = null;
+            var iss = null;
+            
+            // Parse query parameters
+            var params = new URLSearchParams(window.location.search);
+            state = params.get('state');
+            code = params.get('code');
+            sessionState = params.get('session_state');
+            iss = params.get('iss');
+            
+            // Kirim message ke parent window
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'keycloak-silent-check-sso',
+                    state: state,
+                    code: code,
+                    session_state: sessionState,
+                    iss: iss
+                }, window.location.origin);
+            }
+            
+            console.log('Silent check SSO executed:', { state, code, sessionState, iss });
+        })();
+    </script>
+</head>
+<body>
+    <!-- Empty page for silent authentication -->
+</body>
+</html>

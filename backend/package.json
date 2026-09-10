@@ -1,0 +1,42 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "node build.js",
+    "test": "mocha test/**/*.test.js --reporter progress --exit",
+    "test:spec": "mocha test/**/*.test.js --reporter spec --exit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.22.1",
+    "express-rate-limit": "^8.2.1",
+    "express-session": "^1.18.2",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "jwk-to-pem": "^2.0.7",
+    "jwks-rsa": "^3.2.0",
+    "keycloak-connect": "^26.1.1",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.3",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
+    "qs": "^6.15.0",
+    "uuid": "^14.0.1",
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0"
+  },
+  "devDependencies": {
+    "mocha": "^11.8.0",
+    "supertest": "^7.2.2"
+  }
+}

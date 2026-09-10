@@ -1,0 +1,11 @@
+node_modules
+.next
+.env
+.env.*
+*.log
+.git
+.gitignore
+preview-spb.mjs
+preview_spb_sbbk.html
+test-correct-endpoints.js
+README.md
