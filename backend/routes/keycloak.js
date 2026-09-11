@@ -382,13 +382,19 @@ router.get('/users/all-simple', keycloakAuth, async (req, res) => {
                 
                 const nip = getAttribute(user, 'nip') || getAttribute(user, 'NIP') || getAttribute(user, 'employeeId');
                 const jabatan = getAttribute(user, 'jabatan') || getAttribute(user, 'Jabatan') || getAttribute(user, 'position') || getAttribute(user, 'title');
+                // Atribut "pangkat" di Keycloak sudah berisi GABUNGAN "Pangkat / Golongan"
+                // (mis. "Penata Muda Tingkat I / III b") sesuai kolom `pangkat` di DB.
+                // Nilai "-" dipakai Keycloak untuk data kosong → jangan diteruskan.
+                const pangkatRaw = getAttribute(user, 'pangkat') || getAttribute(user, 'Pangkat')
+                    || getAttribute(user, 'golongan') || getAttribute(user, 'Golongan');
+                const pangkat = (pangkatRaw && pangkatRaw.trim() && pangkatRaw.trim() !== '-') ? pangkatRaw.trim() : '';
                 
                 return {
                     nama: nama,
                     nip: nip,
                     jabatan: jabatan,
+                    pangkat: pangkat,
                     username: user.username || '',
-                    email: user.email || '',
                     enabled: user.enabled,
                     id: user.id
                 };

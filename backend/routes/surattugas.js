@@ -11,12 +11,14 @@ const router = express.Router();
 const db = require('../db');
 const {
     getIdentity, roleInfo, tanggalIndo, lamaHari, toSqlDate,
-    logAction
+    normalizeNip, logAction
 } = require('../utils/suratHelpers');
+const { tahunDokumen, pratinjauNomorSppd, alokasiNomorSppd } = require('../utils/penomoran');
 
 const INSTANSI_DEFAULT = 'Balai Besar POM di Palangka Raya';
 
 // ---------- helper: ambil detail lengkap ST ----------
+// `stId` = nomor urut internal (kolom `id`).
 async function getDetail(stId) {
     const [rows] = await db.query('SELECT * FROM surat_tugas WHERE id = ?', [stId]);
     if (rows.length === 0) return null;
@@ -51,31 +53,99 @@ async function loadOwned(stId, user_key) {
     return rows.length ? rows[0] : null;
 }
 
+// ---------- helper: NIP dari username Keycloak (preferred_username biasanya = NIP tanpa spasi) ----------
 function nomorDariUsername(username) {
     return username && /^\d[\d\s]*$/.test(String(username)) ? String(username).replace(/\s/g, '') : null;
+}
+
+// ---------- helper: apakah user yang login terdaftar sebagai PESERTA ST? ----------
+// Tabel surat_tugas_peserta tidak menyimpan user_key (hanya nama + NIP), jadi
+// pencocokan dilakukan lewat NIP — nilai di DB bisa berformat berspasi.
+// Nama dipakai sebagai cadangan HANYA bila NIP peserta kosong.
+function isPesertaST(st, req) {
+    const { username } = getIdentity(req);
+    const nipSaya = nomorDariUsername(username);
+    const namaSaya = String(req.user?.name || '').trim().toLowerCase();
+
+    return (st.peserta || []).some((p) => {
+        const pnip = normalizeNip(p.nip);
+        if (pnip) return !!nipSaya && pnip === nipSaya;
+        return !!namaSaya && String(p.nama || '').trim().toLowerCase() === namaSaya;
+    });
+}
+
+// ---------- helper: klausa batas akses daftar ST ----------
+// Dipakai bersama oleh GET /, GET /stats, dan GET /dashboard supaya daftar,
+// badge, dan dashboard selalu konsisten:
+//   - admin_arsiparis : ST yang sudah disetujui / terbit
+//   - katim           : ST yang ditujukan kepadanya (+ ST lama tanpa katim_key yang sudah diajukan)
+//   - pengguna lain   : ST miliknya sendiri (user_key) ATAU ST yang memuat dia sebagai peserta
+// `alias` = alias tabel surat_tugas pada query yang memakai klausa ini.
+function aksesWhere(req, alias = 'surat_tugas') {
+    const { user_key, username } = getIdentity(req);
+    const roles = roleInfo(req);
+    const nipSaya = nomorDariUsername(username);
+    const A = alias;
+
+    const bagian = [];
+    const params = [];
+    const tambahSebagaiPeserta = () => {
+        if (!nipSaya) return;
+        bagian.push(`EXISTS (SELECT 1 FROM surat_tugas_peserta pp WHERE pp.surat_tugas_id = ${A}.id AND REPLACE(pp.nip, ' ', '') = ?)`);
+        params.push(nipSaya);
+    };
+
+    if (roles.isKatim) {
+        bagian.push(`(${A}.katim_key = ? AND ${A}.status <> 'draft')`);
+        params.push(user_key);
+        bagian.push(`(${A}.katim_key IS NULL AND ${A}.status IN ('diajukan','disetujui','dikembalikan','terbit'))`);
+        tambahSebagaiPeserta();
+    } else if (roles.isAdminArsiparis) {
+        bagian.push(`${A}.status IN ('disetujui','terbit')`);
+        tambahSebagaiPeserta();
+    } else {
+        bagian.push(`${A}.user_key = ?`);
+        params.push(user_key);
+        tambahSebagaiPeserta();
+    }
+
+    return { sql: bagian.join(' OR '), params };
+}
+
+// ---------- helper: hak akses MELIHAT satu ST ----------
+// Tanpa ini, siapa pun yang sudah login bisa membuka ST siapa pun hanya dengan
+// mengganti angka pada URL (mis. ?id=16 → ?id=17) — celah IDOR.
+// Aturannya disamakan dengan daftar di GET / agar konsisten:
+//   - pembuat & peserta : ST yang memuat dirinya
+//   - admin / superadmin : semua ST
+//   - admin_arsiparis    : ST yang sudah disetujui / terbit
+//   - katim              : ST yang ditujukan kepadanya (+ ST lama tanpa katim_key yang sudah diajukan)
+function bolehLihatST(st, req) {
+    const roles = roleInfo(req);
+    const { user_key } = getIdentity(req);
+
+    // Pembuat dan peserta ST selalu boleh membuka ST yang memuat namanya.
+    if (st.user_key === user_key || isPesertaST(st, req)) return true;
+
+    if (roles.roles.includes('admin') || roles.roles.includes('superadmin')) return true;
+    if (roles.isAdminArsiparis) return ['disetujui', 'terbit'].includes(st.status);
+    if (roles.isKatim) {
+        if (st.katim_key) return st.katim_key === user_key;
+        return ['diajukan', 'disetujui', 'dikembalikan', 'terbit'].includes(st.status);
+    }
+    return false;
 }
 
 // ============================================================
 // GET / — daftar surat tugas (dibatasi role)
 // ============================================================
 router.get('/', async (req, res) => {
-    const { user_key } = getIdentity(req);
-    const roles = roleInfo(req);
     const { status, q } = req.query;
 
-    const where = [];
-    const params = [];
-
-    if (roles.isKatim) {
-        // Katim hanya melihat ST yang ditujukan kepadanya (+ ST lama tanpa penugasan)
-        where.push("(katim_key = ? AND status <> 'draft') OR (katim_key IS NULL AND status IN ('diajukan','disetujui','dikembalikan','terbit'))");
-        params.push(user_key);
-    } else if (roles.isAdminArsiparis) {
-        where.push("status IN ('disetujui','terbit')");
-    } else {
-        where.push('user_key = ?');
-        params.push(user_key);
-    }
+    // Batas akses (peran + keikutsertaan sebagai peserta) — sama dengan /stats & /dashboard.
+    const akses = aksesWhere(req, 'st');
+    const where = [`(${akses.sql})`];
+    const params = [...akses.params];
 
     if (status && status !== 'all') {
         where.push('status = ?');
@@ -90,6 +160,7 @@ router.get('/', async (req, res) => {
     const sql = `
         SELECT st.id, st.nomor_st, st.kegiatan, st.mak, st.kota_kab_kecamatan,
                st.tanggal_st, st.status, st.tanpa_sppd, st.ppk_nama, st.tgl_verifikasi, st.tgl_penomoran,
+               st.user_key, st.username,
                st.created_at, st.updated_at,
                (SELECT COUNT(*) FROM surat_tugas_peserta p WHERE p.surat_tugas_id = st.id) AS jml_peserta,
                (SELECT COUNT(*) FROM sppd s2 WHERE s2.surat_tugas_id = st.id) AS jml_sppd
@@ -125,9 +196,11 @@ router.get('/stats', async (req, res) => {
             const [[r]] = await db.query("SELECT COUNT(*) c FROM surat_tugas WHERE status = 'disetujui'");
             data = { menunggu_penomoran: r.c };
         } else {
+            // Pengguna biasa: ST miliknya + ST yang memuat dia sebagai peserta.
+            const akses = aksesWhere(req);
             const [rows] = await db.query(
-                "SELECT status, COUNT(*) c FROM surat_tugas WHERE user_key = ? GROUP BY status",
-                [user_key]
+                `SELECT status, COUNT(*) c FROM surat_tugas WHERE (${akses.sql}) GROUP BY status`,
+                akses.params
             );
             data = { draft: 0, diajukan: 0, disetujui: 0, dikembalikan: 0, terbit: 0 };
             rows.forEach(r => { data[r.status] = r.c; });
@@ -143,19 +216,10 @@ router.get('/stats', async (req, res) => {
 // GET /dashboard — data dashboard (counts, tren 6 bulan, terbaru)
 // ============================================================
 router.get('/dashboard', async (req, res) => {
-    const { user_key } = getIdentity(req);
-    const roles = roleInfo(req);
-    let where = '';
-    const params = [];
-    if (roles.isKatim) {
-        where = "(katim_key = ? OR (katim_key IS NULL AND status IN ('diajukan','disetujui','dikembalikan','terbit')))";
-        params.push(user_key);
-    } else if (roles.isAdminArsiparis) {
-        where = "status IN ('disetujui','terbit')";
-    } else {
-        where = 'user_key = ?';
-        params.push(user_key);
-    }
+    // Batas akses sama dengan daftar & stats (termasuk ST yang memuat user sebagai peserta).
+    const akses = aksesWhere(req);
+    const where = `(${akses.sql})`;
+    const params = [...akses.params];
     try {
         const [rows] = await db.query(
             `SELECT status, COUNT(*) c FROM surat_tugas WHERE ${where} GROUP BY status`, params);
@@ -201,6 +265,18 @@ router.get('/:id', async (req, res) => {
     try {
         const st = await getDetail(id);
         if (!st) return res.status(404).json({ success: false, message: 'Surat tugas tidak ditemukan' });
+
+        // Cegah IDOR: pengguna hanya boleh membuka ST yang menjadi haknya.
+        // Sengaja dibalas 404 (bukan 403) supaya orang luar tidak bisa memakai
+        // perbedaan pesan untuk menebak ST mana yang ada.
+        if (!bolehLihatST(st, req)) {
+            console.warn(`⛔ Akses ditolak: user ${getIdentity(req).username} mencoba membuka ST #${id}`);
+            return res.status(404).json({
+                success: false,
+                message: 'Surat tugas tidak ditemukan atau bukan hak akses Anda'
+            });
+        }
+
         res.json({ success: true, data: st });
     } catch (e) {
         console.error('❌ GET /surattugas/:id:', e);
@@ -539,8 +615,47 @@ router.post('/:id/verifikasi', async (req, res) => {
 });
 
 // ============================================================
+// GET /:id/pratinjau-nomor — admin_arsiparis: nomor SPPD yang AKAN dipakai
+// (pratinjau saja — nomor baru benar-benar dipakai saat POST /:id/penomoran)
+// ============================================================
+router.get('/:id/pratinjau-nomor', async (req, res) => {
+    const roles = roleInfo(req);
+    if (!roles.isAdminArsiparis) {
+        return res.status(403).json({ success: false, message: 'Hanya Admin Arsiparis yang dapat melihat penomoran' });
+    }
+    const { id } = req.params;
+    try {
+        const [rows] = await db.query('SELECT tanggal_st FROM surat_tugas WHERE id = ?', [id]);
+        if (rows.length === 0) return res.status(404).json({ success: false, message: 'Surat tugas tidak ditemukan' });
+
+        const [sppdRows] = await db.query(
+            'SELECT id, urutan, nama FROM sppd WHERE surat_tugas_id = ? ORDER BY urutan, id', [id]);
+
+        // Periode penomoran = tahun tanggal ST (urutan SPPD reset tiap tahun)
+        const tahun = tahunDokumen(rows[0].tanggal_st);
+        const { nomor } = await pratinjauNomorSppd({ tahun, jumlah: sppdRows.length || 1 }, db);
+
+        res.json({
+            success: true,
+            data: {
+                tahun,
+                sppd: sppdRows.map((s, i) => ({ id: s.id, urutan: s.urutan, nama: s.nama, nomor: nomor[i] })),
+            },
+        });
+    } catch (e) {
+        console.error('❌ GET /surattugas/:id/pratinjau-nomor:', e);
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// ============================================================
 // POST /:id/penomoran — admin_arsiparis membubuhkan nomor ST
-// body: { nomorSt, sppdNumbers?: { [sppdId]: 'nomor' } }
+// body: { nomorSt }
+//
+// Nomor SPPD TIDAK lagi dikirim dari klien — diberikan OTOMATIS oleh server
+// sebagai angka urut per tahun (lihat utils/penomoran.js). Parameter lama
+// `sppdNumbers` sudah TIDAK dipakai lagi. Nomor bisa diperbaiki lewat
+// PUT /:id/sppd/:sppdId bila perlu.
 // ============================================================
 router.post('/:id/penomoran', async (req, res) => {
     const roles = roleInfo(req);
@@ -549,7 +664,7 @@ router.post('/:id/penomoran', async (req, res) => {
     }
 
     const { id } = req.params;
-    const { nomorSt, sppdNumbers } = req.body || {};
+    const { nomorSt } = req.body || {};
     if (!nomorSt || !String(nomorSt).trim()) {
         return res.status(400).json({ success: false, message: 'Nomor surat tugas wajib diisi' });
     }
@@ -582,13 +697,15 @@ router.post('/:id/penomoran', async (req, res) => {
             const [sppdRows] = await conn.query(
                 'SELECT id, urutan FROM sppd WHERE surat_tugas_id = ? ORDER BY urutan, id', [id]);
 
-            for (const s of sppdRows) {
-                let noSppd = null;
-                if (sppdNumbers && sppdNumbers[s.id]) {
-                    noSppd = String(sppdNumbers[s.id]).trim();
-                } else {
-                    noSppd = String(s.urutan); // default: 1, 2, 3 ... (format penuh bisa diedit)
-                }
+            // Nomor SPPD OTOMATIS: angka urut per TAHUN (reset saat tahun berganti).
+            // Periode diambil dari tahun tanggal ST. Titik lanjutnya diatur admin
+            // di Pengaturan → Penomoran Manual (tabel app_setting).
+            const tahunNomor = tahunDokumen(st.tanggal_st);
+            const alokasi = await alokasiNomorSppd({ tahun: tahunNomor, jumlah: sppdRows.length }, conn);
+
+            for (let i = 0; i < sppdRows.length; i++) {
+                const s = sppdRows[i];
+                const noSppd = String(alokasi.nomor[i]);
                 const keterangan = `Surat Tugas Nomor ${nomorStFinal} tanggal ${tglStText}`;
                 await conn.query(
                     'UPDATE sppd SET nomor_sppd=?, keterangan_lain=? WHERE id=?',
@@ -596,9 +713,13 @@ router.post('/:id/penomoran', async (req, res) => {
                 );
             }
 
-            await logAction(id, 'penomoran', req, `Nomor ST: ${nomorStFinal}`, conn);
+            const pesanSppd = alokasi.nomor.length
+                ? ` Nomor SPPD: ${alokasi.nomor[0]}${alokasi.nomor.length > 1 ? `–${alokasi.nomor[alokasi.nomor.length - 1]}` : ''} (urutan tahun ${alokasi.tahun}).`
+                : '';
+
+            await logAction(id, 'penomoran', req, `Nomor ST: ${nomorStFinal}${pesanSppd}`, conn);
             await conn.commit();
-            res.json({ success: true, message: 'Nomor ST & SPPD berhasil diterbitkan' });
+            res.json({ success: true, message: `Nomor ST & SPPD berhasil diterbitkan.${pesanSppd}` });
         } catch (e) {
             await conn.rollback(); throw e;
         } finally { conn.release(); }
@@ -613,27 +734,28 @@ router.post('/:id/penomoran', async (req, res) => {
 // ============================================================
 router.put('/:id/sppd/:sppdId', async (req, res) => {
     const roles = roleInfo(req);
-    if (!roles.isAdminArsiparis && !roles.isUser) {
-        return res.status(403).json({ success: false, message: 'Akses ditolak' });
+    if (!roles.isAdminArsiparis) {
+        return res.status(403).json({ success: false, message: 'Akses ditolak: hanya Admin Arsiparis yang dapat mengubah nomor SPPD' });
     }
     const { id, sppdId } = req.params;
     const { nomorSppd } = req.body || {};
+
+    // Wajib diisi — sebelumnya bisa terkirim kosong dan MENGHAPUS nomor SPPD ST lain.
+    if (nomorSppd === undefined || nomorSppd === null || !String(nomorSppd).trim()) {
+        return res.status(400).json({ success: false, message: 'nomorSppd wajib diisi' });
+    }
 
     try {
         const [rows] = await db.query('SELECT * FROM surat_tugas WHERE id = ?', [id]);
         if (rows.length === 0) return res.status(404).json({ success: false, message: 'ST tidak ditemukan' });
 
         const st = rows[0];
-        // hanya admin yang boleh ubah nomor_sppd setelah terbit
-        if (nomorSppd !== undefined && !roles.isAdminArsiparis) {
-            return res.status(403).json({ success: false, message: 'Hanya Admin Arsiparis yang dapat mengubah nomor SPPD' });
-        }
         if (!['disetujui', 'terbit'].includes(st.status)) {
             return res.status(400).json({ success: false, message: `Status "${st.status}" tidak mengizinkan perubahan nomor SPPD` });
         }
 
         await db.query('UPDATE sppd SET nomor_sppd = ? WHERE id = ? AND surat_tugas_id = ?',
-            [nomorSppd ? String(nomorSppd).trim() : null, sppdId, id]);
+            [String(nomorSppd).trim(), sppdId, id]);
         res.json({ success: true, message: 'Nomor SPPD diperbarui' });
     } catch (e) {
         console.error('❌ PUT /surattugas/:id/sppd/:sppdId:', e);
@@ -670,6 +792,38 @@ router.delete('/:id', async (req, res) => {
     } catch (e) {
         console.error('❌ DELETE /surattugas/:id:', e);
         res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// ============================================================
+// POST /pdf — render halaman cetak menjadi SATU berkas PDF
+// Body: { html, namaFile }
+//
+// Dipakai tombol "Unduh PDF". Pencetakan dilakukan di server
+// memakai Chrome headless, karena dialog print Chrome hanya punya
+// satu pilihan orientasi untuk seluruh dokumen (halaman lampiran
+// yang landscape jadi ikut portrait & isinya terpotong).
+// Di Chrome headless, orientasi campuran portrait + landscape
+// pada satu PDF berjalan dengan benar.
+// ============================================================
+router.post('/pdf', async (req, res) => {
+    const { html, namaFile } = req.body || {};
+
+    if (!html || typeof html !== 'string') {
+        return res.status(400).json({ success: false, message: 'Parameter html wajib dikirim' });
+    }
+
+    try {
+        const { htmlKePdf } = require('../utils/pdfRender');
+        const pdf = await htmlKePdf(html);
+
+        const nama = String(namaFile || 'surat-tugas').replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 120);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${nama}.pdf"`);
+        return res.send(pdf);
+    } catch (e) {
+        console.error('❌ POST /surattugas/pdf:', e.message);
+        return res.status(500).json({ success: false, message: 'Gagal membuat PDF: ' + e.message });
     }
 });
 

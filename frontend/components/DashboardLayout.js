@@ -17,14 +17,33 @@ import { useSession, signOut } from 'next-auth/react';
 import {
   FaBars, FaTimes, FaHome, FaSignOutAlt, FaChevronDown,
   FaChevronLeft, FaChevronRight, FaPlus, FaSun, FaMoon, FaArchive,
-  FaFileSignature, FaBookOpen,
+  FaFileSignature, FaBookOpen, FaCog, FaStamp,
 } from 'react-icons/fa';
 
+// Menu dengan `children` = menu induk bersubmenu (bisa dibuka/ditutup).
+// `adminOnly: true` pada submenu = hanya tampil untuk role admin_arsiparis
+// (penjagaan sebenarnya tetap di backend).
 const NAV_ITEMS = [
   { label: 'Beranda', href: '/', icon: FaHome },
   { label: 'Surat Tugas', href: '/surattugas', icon: FaFileSignature },
-  { label: 'Dasar Aturan', href: '/pengaturan', icon: FaBookOpen },
+  {
+    label: 'Pengaturan',
+    icon: FaCog,
+    children: [
+      { label: 'Dasar Aturan', href: '/pengaturan/dasaraturan', icon: FaBookOpen },
+      { label: 'Penomoran Manual', href: '/pengaturan/penomoran', icon: FaStamp, adminOnly: true },
+    ],
+  },
 ];
+
+/** Apakah `href` sedang aktif untuk `pathname` sekarang? */
+function cocokRute(pathname, href) {
+  return (
+    pathname === href ||
+    (href !== '/' && pathname.startsWith(href + '/')) ||
+    (href !== '/' && pathname === href.replace(/\/$/, ''))
+  );
+}
 
 export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
   const router = useRouter();
@@ -36,6 +55,7 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
   const [isDark, setIsDark] = useState(false); // dark mode
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [openMenu, setOpenMenu] = useState(null); // label menu induk yang submenunya terbuka
   const themeAppliedRef = useRef(false);
   const userMenuRef = useRef(null);
 
@@ -75,6 +95,12 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Saat rute berubah: buka otomatis submenu yang memuat halaman aktif
+  useEffect(() => {
+    const induk = NAV_ITEMS.find((it) => it.children?.some((c) => cocokRute(router.pathname, c.href)));
+    setOpenMenu(induk ? induk.label : null);
+  }, [router.pathname]);
 
   // ==== Logout NextAuth + Keycloak SSO ====
   const handleLogout = async () => {
@@ -139,10 +165,8 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
   // Redirect akan terjadi via useEffect di atas
   if (!session) return null;
 
-  const isActive = (href) =>
-    router.pathname === href ||
-    (href !== '/' && router.pathname.startsWith(href + '/')) ||
-    (href !== '/' && router.pathname === href.replace(/\/$/, ''));
+  const isActive = (href) => cocokRute(router.pathname, href);
+  const isAdminArsiparis = !!user.isAdminArsiparis;
 
   return (
     <div className="min-h-screen bg-stone-100 text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 transition-colors">
@@ -188,24 +212,93 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
           <div className="space-y-1">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
+              const children = (item.children || []).filter((c) => !c.adminOnly || isAdminArsiparis);
+
+              // ---- menu biasa (tanpa submenu) ----
+              if (!children.length) {
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setSidebarOpen(false)}
+                    title={isCollapsed ? item.label : undefined}
+                    aria-label={item.label}
+                    className={`flex items-center rounded-lg text-sm font-medium transition-colors ${
+                      isCollapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3.5 py-2.5'
+                    } ${
+                      isActive(item.href)
+                        ? 'bg-amber-400 text-zinc-900'
+                        : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    {!isCollapsed && <span>{item.label}</span>}
+                  </Link>
+                );
+              }
+
+              // ---- menu induk bersubmenu ----
+              const adaAnakAktif = children.some((c) => isActive(c.href));
+              const terbuka = openMenu === item.label;
+
+              // Sidebar mengecil: cukup ikon; klik = lebarkan + buka submenu
+              if (isCollapsed) {
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => { setIsCollapsed(false); setOpenMenu(item.label); }}
+                    title={item.label}
+                    aria-label={item.label}
+                    className={`w-full flex items-center justify-center rounded-lg text-sm font-medium transition-colors px-0 py-2.5 ${
+                      adaAnakAktif ? 'bg-amber-400 text-zinc-900' : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                  </button>
+                );
+              }
+
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setSidebarOpen(false)}
-                  title={isCollapsed ? item.label : undefined}
-                  aria-label={item.label}
-                  className={`flex items-center rounded-lg text-sm font-medium transition-colors ${
-                    isCollapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3.5 py-2.5'
-                  } ${
-                    isActive(item.href)
-                      ? 'bg-amber-400 text-zinc-900'
-                      : 'text-zinc-400 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <span>{item.label}</span>}
-                </Link>
+                <div key={item.label}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenMenu(terbuka ? null : item.label)}
+                    aria-expanded={terbuka}
+                    className={`w-full flex items-center gap-3 rounded-lg px-3.5 py-2.5 text-sm font-medium transition-colors ${
+                      adaAnakAktif && !terbuka
+                        ? 'text-white bg-white/5'
+                        : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="flex-1 text-left">{item.label}</span>
+                    <FaChevronDown className={`w-3 h-3 transition-transform ${terbuka ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {terbuka && (
+                    <div className="mt-1 space-y-1 pl-3">
+                      {children.map((c) => {
+                        const IconAnak = c.icon;
+                        return (
+                          <Link
+                            key={c.href}
+                            href={c.href}
+                            onClick={() => setSidebarOpen(false)}
+                            className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
+                              isActive(c.href)
+                                ? 'bg-amber-400 text-zinc-900'
+                                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                            }`}
+                          >
+                            <IconAnak className="w-3.5 h-3.5 shrink-0" />
+                            <span>{c.label}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

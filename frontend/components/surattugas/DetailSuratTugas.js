@@ -30,7 +30,9 @@ export default function DetailSuratTugas() {
   const [keputusan, setKeputusan] = useState('setujui');
   const [catatan, setCatatan] = useState('');
   const [nomorSt, setNomorSt] = useState('');
-  const [sppdNumbers, setSppdNumbers] = useState({});
+  const [nomorSppdOtomatis, setNomorSppdOtomatis] = useState([]); // pratinjau: { id, urutan, nama, nomor }
+  const [tahunNomor, setTahunNomor] = useState(null);
+  const [memuatNomor, setMemuatNomor] = useState(false);
 
   const load = async () => {
     if (!id) return;
@@ -85,11 +87,21 @@ export default function DetailSuratTugas() {
   const showPenomoran = isAdminArsiparis && data.status === 'disetujui';
   const showCetak = data.status === 'terbit';
 
+  // Buka modal penomoran + ambil pratinjau nomor SPPD yang AKAN diberikan server.
+  // Nomor SPPD tidak lagi diketik manual — diatur di Pengaturan → Penomoran Manual.
   const openPenomoran = () => {
     setModal('penomoran');
-    setSppdNumbers(
-      Object.fromEntries((data.sppd || []).map((s) => [s.id, s.nomor_sppd || String(s.urutan)]))
-    );
+    setNomorSppdOtomatis([]);
+    setTahunNomor(null);
+    setMemuatNomor(true);
+    axiosInstance
+      .get(`/surattugas/${id}/pratinjau-nomor`)
+      .then((r) => {
+        setNomorSppdOtomatis(r.data?.data?.sppd || []);
+        setTahunNomor(r.data?.data?.tahun ?? null);
+      })
+      .catch((e) => setError(e.response?.data?.message || 'Gagal memuat pratinjau nomor SPPD'))
+      .finally(() => setMemuatNomor(false));
   };
 
   const run = async (fn, closeModal = true) => {
@@ -134,15 +146,9 @@ export default function DetailSuratTugas() {
       run(() =>
         axiosInstance.post(`/surattugas/${id}/verifikasi`, { keputusan, catatan })
       ),
-    penomoran: () =>
-      run(() =>
-        axiosInstance.post(`/surattugas/${id}/penomoran`, {
-          nomorSt,
-          sppdNumbers: Object.fromEntries(
-            Object.entries(sppdNumbers).filter(([, v]) => String(v || '').trim() !== '')
-          ),
-        })
-      ),
+    // Nomor SPPD diberikan OTOMATIS oleh server (angka urut per tahun) — lihat
+    // Pengaturan → Penomoran Manual. Jadi klien hanya mengirim Nomor ST.
+    penomoran: () => run(() => axiosInstance.post(`/surattugas/${id}/penomoran`, { nomorSt })),
   };
 
   const btnBase = 'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50';
@@ -191,19 +197,16 @@ export default function DetailSuratTugas() {
                 </button>
               )}
               {showCetak && (
+                /* Cetak SPPD TIDAK lagi digabung di sini — masing-masing SPPD
+                   punya tombol cetak sendiri di tabel SPPD (per pegawai). */
                 <>
                   <a href={`/surattugas?id=${data.id}&cetak=1&jenis=st`} target="_blank" rel="noreferrer" className={`${btnBase} bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-700`}>
                     <FaPrint className="w-3.5 h-3.5" /> Cetak ST
                   </a>
-                  {!data.tanpa_sppd && (data.sppd || []).length > 0 && ((data.sppd || []).length === 1 ? (
-                    <a href={`/surattugas?id=${data.id}&cetak=1&jenis=sppd&sppd=${data.sppd[0].id}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-emerald-600 text-white hover:bg-emerald-500`}>
-                      <FaPrint className="w-3.5 h-3.5" /> Cetak SPPD
-                    </a>
-                  ) : (
-                    <a href={`/surattugas?id=${data.id}&cetak=1&jenis=sppd`} target="_blank" rel="noreferrer" className={`${btnBase} bg-emerald-600 text-white hover:bg-emerald-500`}>
-                      <FaPrint className="w-3.5 h-3.5" /> Cetak Semua SPPD
-                    </a>
-                  ))}
+                  {/* SATU berkas PDF: ST + lampiran + semua SPD (halaman belakang sekali saja) */}
+                  <a href={`/surattugas?id=${data.id}&cetak=1&jenis=semua`} target="_blank" rel="noreferrer" className={`${btnBase} bg-emerald-600 text-white hover:bg-emerald-500`}>
+                    <FaPrint className="w-3.5 h-3.5" /> Unduh Semua
+                  </a>
                 </>
               )}
             </div>
@@ -224,7 +227,14 @@ export default function DetailSuratTugas() {
                 </div>
                 <div>
                   <h3 className="font-bold text-zinc-900 dark:text-zinc-100">{data.kegiatan || '(tanpa kegiatan)'}</h3>
-                  <p className="text-sm text-zinc-500">Oleh: {data.username || '-'}</p>
+                  <p className="text-sm text-zinc-500">
+                    Oleh: {data.username || '-'}
+                    {!isOwner && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-sky-50 dark:bg-sky-500/10 text-[9px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-300 px-2 py-0.5 align-middle">
+                        Anda peserta
+                      </span>
+                    )}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -332,6 +342,7 @@ export default function DetailSuratTugas() {
                       <th className="py-2 pr-3">Angkut</th>
                       <th className="py-2 pr-3">Berangkat</th>
                       <th className="py-2 pr-3">Kembali</th>
+                      <th className="py-2">Cetak SPPD</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100 dark:divide-zinc-800">
@@ -347,6 +358,21 @@ export default function DetailSuratTugas() {
                         <td className="py-2.5 pr-3">{s.alat_angkut || '—'}</td>
                         <td className="py-2.5 pr-3">{s.tanggal_berangkat ? tglIndo(s.tanggal_berangkat) : '—'}</td>
                         <td className="py-2.5 pr-3">{s.tanggal_kembali ? tglIndo(s.tanggal_kembali) : '—'}</td>
+                        <td className="py-2.5">
+                          {showCetak ? (
+                            <a
+                              href={`/surattugas?id=${data.id}&cetak=1&jenis=sppd&sppd=${s.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={`Cetak SPPD ${s.nama || ''}`}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-500 whitespace-nowrap"
+                            >
+                              <FaPrint className="w-3 h-3" /> Cetak
+                            </a>
+                          ) : (
+                            <span className="text-xs text-zinc-300 dark:text-zinc-600">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -440,7 +466,9 @@ export default function DetailSuratTugas() {
                 <>
                   <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-3">Penomoran Surat Tugas</h4>
                   <p className="text-xs text-zinc-500 mb-3">
-                    Nomor ST diketik sesuai format. Nomor SPPD otomatis mengikuti urutan & bisa disesuaikan.
+                    Nomor ST diketik sesuai format. Nomor SPPD diberikan <b>otomatis</b> oleh sistem
+                    (angka urut tahun {tahunNomor ?? '—'}), satu nomor per pegawai. Titik awalnya diatur di
+                    <b> Pengaturan → Penomoran Manual</b>.
                   </p>
                   <label className="block mb-4">
                     <span className="block text-xs font-medium text-zinc-500 mb-1">Nomor Surat Tugas *</span>
@@ -452,18 +480,36 @@ export default function DetailSuratTugas() {
                     />
                   </label>
                   <div className="space-y-2 max-h-56 overflow-y-auto">
-                    {(data.sppd || []).map((s) => (
-                      <label key={s.id} className="flex items-center gap-3 rounded-lg border border-stone-200 dark:border-zinc-700 px-3 py-2">
-                        <span className="text-xs text-zinc-400 w-5">#{s.urutan}</span>
-                        <span className="flex-1 text-sm text-zinc-700 dark:text-zinc-200 truncate">{s.nama || '-'}</span>
-                        <input
-                          value={sppdNumbers[s.id] || ''}
-                          onChange={(e) => setSppdNumbers((m) => ({ ...m, [s.id]: e.target.value }))}
-                          placeholder="Nomor SPPD"
-                          className="w-36 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 text-sm"
-                        />
-                      </label>
-                    ))}
+                    {memuatNomor ? (
+                      <div className="flex items-center gap-2 text-sm text-zinc-400 px-1 py-2">
+                        <FaSpinner className="w-4 h-4 animate-spin" /> Memuat nomor otomatis…
+                      </div>
+                    ) : (data.sppd || []).length === 0 ? (
+                      <p className="text-sm text-zinc-400 px-1 py-2">ST ini tanpa SPPD.</p>
+                    ) : (
+                      <div className="rounded-xl border border-stone-200 dark:border-zinc-700 overflow-hidden">
+                        <div className="px-3 py-2 bg-stone-50 dark:bg-zinc-800/60 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                          Nomor SPPD otomatis
+                        </div>
+                        {(data.sppd || []).map((s) => {
+                          const auto = nomorSppdOtomatis.find((x) => String(x.id) === String(s.id));
+                          return (
+                            <div key={s.id} className="flex items-center gap-3 px-3 py-2 border-t border-stone-200 dark:border-zinc-700">
+                              <span className="text-xs text-zinc-400 w-5 shrink-0">#{s.urutan}</span>
+                              <span className="flex-1 text-sm text-zinc-700 dark:text-zinc-200 truncate">{s.nama || '-'}</span>
+                              <span className="font-mono text-sm text-zinc-900 dark:text-zinc-100 shrink-0">
+                                {auto?.nomor ?? '—'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {!memuatNomor && (data.sppd || []).length > 0 && (
+                      <p className="text-[11px] text-zinc-400 px-1">
+                        Perkiraan — nomor final diberikan saat tombol Terbitkan Nomor ditekan.
+                      </p>
+                    )}
                   </div>
                   <div className="flex justify-end gap-2 mt-5">
                     <button onClick={() => setModal(null)} className="rounded-lg px-4 py-2 text-sm text-zinc-500 hover:bg-stone-100">Batal</button>

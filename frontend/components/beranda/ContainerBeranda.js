@@ -273,7 +273,7 @@ export default function ContainerBeranda() {
             <span className="w-8 h-8 rounded-lg bg-stone-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 flex items-center justify-center shrink-0"><FaFileSignature className="w-4 h-4" /></span>
             Buka Surat Tugas
           </Link>
-          <Link href="/pengaturan" className="flex items-center gap-3 rounded-xl bg-white dark:bg-zinc-800 border border-stone-200 dark:border-zinc-700 px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:border-amber-400 hover:text-amber-600 transition-colors">
+          <Link href="/pengaturan/dasaraturan" className="flex items-center gap-3 rounded-xl bg-white dark:bg-zinc-800 border border-stone-200 dark:border-zinc-700 px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:border-amber-400 hover:text-amber-600 transition-colors">
             <span className="w-8 h-8 rounded-lg bg-stone-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 flex items-center justify-center shrink-0"><FaBookOpen className="w-4 h-4" /></span>
             Dasar Aturan
           </Link>

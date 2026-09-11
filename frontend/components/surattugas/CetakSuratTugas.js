@@ -1,11 +1,11 @@
-// components/surattugas/CetakSuratTugas.js — Halaman cetak (PDF via browser print)
-// ?jenis=st  -> Surat Tugas
-// ?jenis=sppd&sppd=<id> -> SPPD tertentu | tanpa sppd -> semua SPPD (page-break tiap lembar)
+// components/surattugas/CetakSuratTugas.js — Halaman cetak SURAT TUGAS (+ lampiran peserta)
+// ?jenis=st (default) -> Surat Tugas; bila peserta > 1 orang ditambah halaman lampiran (landscape)
+// Halaman cetak SPD/SPPD ada di file TERPISAH: components/surattugas/CetakSPD.js
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { axiosInstance } from '../../utils/axiosInstance';
-import { FaPrint, FaSpinner } from 'react-icons/fa';
+import { FaSpinner, FaFilePdf } from 'react-icons/fa';
 
 const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
@@ -20,7 +20,26 @@ function tanggalPanjang(dateStr) {
   return `${d.getDate()} ${BULAN[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-const CSS = `
+// NIP 18 digit → format resmi "XXXXXXXX XXXXXX X XXX".
+// Nilai yang sudah berspasi / panjangnya bukan 18 digit dibiarkan apa adanya.
+function formatNip(nip) {
+  const s = String(nip || '').trim();
+  const digit = s.replace(/\s/g, '');
+  if (/^\d{18}$/.test(digit)) {
+    return `${digit.slice(0, 8)} ${digit.slice(8, 14)} ${digit.slice(14, 15)} ${digit.slice(15, 18)}`;
+  }
+  return s;
+}
+
+/* Kode variabel tanda tangan untuk Srikandi (dipakai pada cetak Surat Tugas):
+     - ST yang memakai SPPD  → ttd_pengirim1
+     - ST tanpa SPPD         → ttd_pengirim
+   Ditulis sebagai string berkutip satu supaya TIDAK dianggap interpolasi JS/CSS. */
+function kodeTtd(data) {
+  return data?.tanpa_sppd ? '${ttd_pengirim}' : '${ttd_pengirim1}';
+}
+
+export const CSS = `
   * { box-sizing: border-box; }
   body { margin: 0; background: #e7e5e4; }
   .print-sheet {
@@ -55,15 +74,6 @@ const CSS = `
     width: 215.9mm;      /* selebar kertas Legal */
     max-width: none;     /* kalahkan reset Tailwind: img { max-width: 100% } */
     height: auto;
-  }
-  /* Kotak peringatan gratifikasi — kotak tersendiri di bawah kotak tanda tangan */
-  .ttd-catatan {
-    margin-top: 6mm;
-    border: 1px solid #000;
-    padding: 2mm 1.5mm;   /* padding kiri/kanan dikecilkan agar teks 12pt tetap 1 baris */
-    text-align: center;
-    font-size: 12pt;
-    line-height: 1.15;
   }
   /* Judul & Nomor — Bookman Old Style 12; spasi antara keduanya = 1 (single) */
   .judul {
@@ -124,33 +134,89 @@ const CSS = `
     text-rendering: geometricPrecision;
   }
   .ttd-blok .nama { margin-top: 20mm; } /* ruang QR ±20mm; nama: tanpa bold & tanpa garis bawah */
-  .sppd-table { width: 100%; border-collapse: collapse; margin-top: 4mm; }
-  .sppd-table td { border: 1px solid #000; padding: 2mm 2.5mm; vertical-align: top; }
-  .sppd-table .no { width: 6mm; text-align: center; }
-  .sppd-table .sub { width: 6mm; text-align: center; }
-  .tb-perjadin { width: 100%; border-collapse: collapse; }
-  .tb-perjadin td { border: 1px solid #000; padding: 1.5mm 2mm; font-size: 11pt; }
   .keterangan-table td { border: 1px solid #000; padding: 1.5mm 2mm; }
   .center { text-align: center; }
   .right { text-align: right; }
   .toolbar { position: sticky; top: 0; z-index: 10; display: flex; justify-content: center; gap: 10px; padding: 12px; }
   .toolbar button { border: none; border-radius: 10px; padding: 10px 18px; font-weight: 600; cursor: pointer; }
+  .toolbar-pesan { text-align: center; color: #b91c1c; font-family: system-ui, sans-serif; font-size: 13px; padding: 0 12px 10px; }
+  /* ============ LAMPIRAN (landscape) — dipakai bila peserta lebih dari 1 orang ============
+     Kertas Legal diputar: 355,6mm × 215,9mm.
+     Hanya blok LAMPIRAN / SURAT TUGAS / NOMOR / TANGGAL yang 10pt; judul, tabel,
+     dan tanda tangan tetap 12pt. */
+  .sheet-landscape {
+    page: landscape;         /* ganti orientasi jadi landscape (lihat aturan halaman bernama di @media print) */
+    width: 355.6mm;
+    min-height: 215.9mm;
+    padding: 12mm 18mm 14mm;
+  }
+  /* Nomor halaman lampiran — di tengah atas.
+     margin-bottom: 1.15em = SATU BARIS KOSONG (1x enter) pada ukuran ini:
+     font 12pt × line-height 1.15 = 13,8pt ≈ 4,87mm — jarak ke blok LAMPIRAN.
+     Diubah 2026-09-11 atas permintaan user (sebelumnya tanpa jarak sama sekali). */
+  .lamp-nomor { text-align: center; font-size: 12pt; margin-bottom: 1.15em; }
+  /* Dua "kotak" (tanpa garis): KIRI lebih lebar & kosong, KANAN lebih sempit.
+     Dipakai DUA kali: blok LAMPIRAN dkk (10pt) dan blok tanda tangan (12pt).
+     Isi kotak kanan selalu rata kiri. */
+  .lamp-kotak { display: flex; align-items: flex-start; width: 100%; }
+  .lamp-kotak-kiri { width: 65%; }
+  .lamp-kotak-kanan { width: 35%; text-align: left; }
+  /* Blok LAMPIRAN / SURAT TUGAS / NOMOR / TANGGAL — SATU-SATUNYA bagian berukuran 10pt */
+  .lamp-kepala { font-size: 10pt; line-height: 1.25; }
+  .lamp-judul { text-align: center; font-size: 12pt; font-weight: normal; margin: 8mm 0 0; }
+  /* table-layout: fixed → lebar kolom PERSIS seperti yang ditetapkan di bawah.
+     Total lebar konten lampiran (Legal landscape) = 355,6mm − 2×18mm padding = 319,6mm. */
+  .lamp-table { width: 100%; border-collapse: collapse; margin-top: 5mm; table-layout: fixed; }
+  .lamp-table th, .lamp-table td {
+    border: 1px solid #000;
+    padding: 1.2mm 2mm;
+    vertical-align: top;
+    font-size: 12pt;
+    overflow-wrap: break-word;
+  }
+  .lamp-table th { text-align: center; font-weight: normal; background: #ececec; }
+  .lamp-table .c-no { width: 12mm; text-align: center; }
+  .lamp-table .c-nama { width: 96mm; }
+  .lamp-table .c-nip { width: 58mm; white-space: nowrap; }
+  .lamp-table .c-pangkat { width: 76mm; }
+  /* .c-jabatan tidak diberi lebar → otomatis mengisi sisa (± 77,6mm) */
+  /* Tanda tangan lampiran — pola 2 kotak juga: kotak kanan lebih sempit, tulisan
+     ttd rata kiri. Ukuran tetap 12pt (bukan 10pt). */
+  .lamp-ttd { margin-top: 12mm; }
+  .lamp-ttd .ttd-pengirim {
+    margin-top: 16mm;
+    padding-left: 5ch;                 /* indentasi 5 spasi sebelum variabel (sama seperti surat utama) */
+    font-kerning: none;
+    font-variant-ligatures: none;
+    letter-spacing: normal;
+    word-spacing: normal;
+    text-rendering: geometricPrecision;
+  }
+  .lamp-ttd .lamp-nama { margin-top: 20mm; }
   @media print {
     body { background: #fff; }
     .toolbar { display: none !important; }
     .print-sheet { margin: 0; width: auto; box-shadow: none; }
     .page-break { page-break-after: always; }
+    /* next-route-announcer (elemen bawaan Next.js) duduk setelah lembar terakhir.
+       Karena lembar lampiran memakai konteks halaman landscape, kehadiran elemen ini
+       memaksa Chrome pindah kembali ke halaman portrait → muncul 1 halaman KOSONG. */
+    next-route-announcer { display: none !important; }
     /* Legal: 215.9mm × 355.6mm — margin kertas 0 (margin diatur via padding .print-sheet) */
     @page { size: 215.9mm 355.6mm; margin: 0; }
+    /* Halaman bernama "landscape" untuk lampiran (Legal diputar) */
+    @page landscape { size: 355.6mm 215.9mm; margin: 0; }
   }
 `;
 
 export default function CetakSuratTugas() {
   const router = useRouter();
-  const { id, jenis, sppd } = router.query;
+  const { id } = router.query;
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [busyPdf, setBusyPdf] = useState(false); // sedang membuat PDF di server
+  const [pesanPdf, setPesanPdf] = useState('');   // pesan bila pembuatan PDF gagal
 
   useEffect(() => {
     if (!id) return;
@@ -166,8 +232,41 @@ export default function CetakSuratTugas() {
     })();
   }, [id]);
 
-  const tipe = jenis === 'sppd' ? 'sppd' : 'st';
-  const sppdList = data?.sppd?.filter((s) => !sppd || String(s.id) === String(sppd)) || [];
+  const adaLampiran = (data?.peserta || []).length > 1;
+
+  /* Unduh PDF SATU berkas: surat (portrait) + lampiran (landscape).
+     HTML halaman ini dikirim ke backend, lalu dicetak di sana memakai Chrome headless.
+     Ini satu-satunya cara menghasilkan PDF dengan orientasi campuran dalam 1 berkas,
+     karena dialog print Chrome hanya punya satu pilihan orientasi untuk seluruh dokumen. */
+  const unduhPdf = async () => {
+    if (busyPdf) return;
+    setBusyPdf(true);
+    setPesanPdf('');
+    try {
+      // src gambar dijadikan absolut supaya bisa dimuat Chrome di backend
+      document.querySelectorAll('img').forEach((img) => { img.src = img.src; });
+      const luarHtml = document.documentElement.outerHTML
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<next-route-announcer>[\s\S]*?<\/next-route-announcer>/gi, '');
+      const html = `<!doctype html>${luarHtml}`;
+      const nomor = String(data?.nomor_st || '').trim();
+      const nama = `Surat-Tugas-${nomor || id}`.replace(/[\\/:*?"<>|]/g, '-');
+
+      const res = await axiosInstance.post('/surattugas/pdf', { html, namaFile: nama }, { responseType: 'blob' });
+      const blobUrl = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${nama}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    } catch (e) {
+      setPesanPdf('Gagal membuat PDF: ' + (e.response?.data?.message || e.message || 'tidak diketahui'));
+    } finally {
+      setBusyPdf(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -185,28 +284,32 @@ export default function CetakSuratTugas() {
       <Head><title>Cetak | ECIPAR POM</title></Head>
       <style>{CSS}</style>
       <div className="toolbar">
-        <button onClick={() => window.print()} style={{ background: '#f59e0b', color: '#18181b' }}>
-          <FaPrint style={{ display: 'inline' }} /> Cetak / Simpan PDF
+        <button onClick={unduhPdf} disabled={busyPdf} style={{ background: '#18181b', color: '#fde68a', opacity: busyPdf ? 0.6 : 1, cursor: busyPdf ? 'wait' : 'pointer' }}>
+          {busyPdf
+            ? <><FaSpinner style={{ display: 'inline' }} className="animate-spin" /> Membuat PDF…</>
+            : <><FaFilePdf style={{ display: 'inline' }} /> Unduh PDF{adaLampiran ? ' (1 file: surat + lampiran)' : ''}</>}
         </button>
         <button onClick={() => window.close()} style={{ background: '#e4e4e7', color: '#27272a' }}>
           Tutup
         </button>
       </div>
+      {pesanPdf && <div className="toolbar-pesan">{pesanPdf}</div>}
 
-      {tipe === 'st' ? <DokumenST data={data} /> : sppdList.map((s, i) => (
-        <div key={s.id}>
-          <DokumenSPPD data={data} sppd={s} />
-          {i < sppdList.length - 1 && <div className="page-break" />}
-        </div>
-      ))}
+      <DokumenST data={data} />
+      {/* Lebih dari 1 pegawai → halaman lampiran daftar nama (landscape) */}
+      {(data.peserta || []).length > 1 && <LampiranPeserta data={data} />}
     </>
   );
 }
 
 /* ==================== SURAT TUGAS ==================== */
-function DokumenST({ data }) {
+export function DokumenST({ data }) {
   const menimbang = [['a', data.menimbang_a], ['b', data.menimbang_b]].filter(([, isi]) => isi);
   const dasar = (data.dasar || []).map((d, i) => [String(i + 1), d.isi, d.id ?? i]);
+
+  // Peserta > 1 orang → daftar nama TIDAK ditulis di "Kepada", diganti "Nama-nama terlampir"
+  const peserta = data.peserta || [];
+  const banyakPeserta = peserta.length > 1;
 
   const renderSection = (label, rows, keyFn) => (
     <table className="kw-table" key={label}>
@@ -246,14 +349,18 @@ function DokumenST({ data }) {
             <td className="kp-label">Kepada</td>
             <td className="kp-colon">:</td>
             <td>
-              {(data.peserta || []).map((p, i) => (
-                <div key={i} style={{ marginTop: i ? '1.5mm' : 0 }}>
-                  {p.nama || '-'}
-                  {p.nip ? <>{', '}<span className="kp-isi">{p.nip}</span></> : ''}
-                  {p.pangkat ? `, ${p.pangkat}` : ''}
-                  {p.jabatan ? `, ${p.jabatan}` : ''}
-                </div>
-              ))}
+              {banyakPeserta ? (
+                <div>Nama-nama terlampir</div>
+              ) : (
+                peserta.map((p, i) => (
+                  <div key={i} style={{ marginTop: i ? '1.5mm' : 0 }}>
+                    {p.nama || '-'}
+                    {p.nip ? <>{', '}<span className="kp-isi">{p.nip}</span></> : ''}
+                    {p.pangkat ? `, ${p.pangkat}` : ''}
+                    {p.jabatan ? `, ${p.jabatan}` : ''}
+                  </div>
+                ))
+              )}
             </td>
           </tr>
           <tr>
@@ -289,202 +396,73 @@ function DokumenST({ data }) {
               <div>{data.tempat_terbit || 'Palangka Raya'}, {tanggalPanjang(data.tanggal_st)}</div>
               <div>Kepala Balai Besar POM Di Palangka Raya,</div>
               {/* Variabel Srikandi — di dalam kolom ttd, rata kiri, indentasi 5 spasi */}
-              <div className="ttd-pengirim">{'${ttd_pengirim}'}</div>
+              <div className="ttd-pengirim">{kodeTtd(data)}</div>
               <div className="nama">{data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
             </td>
           </tr>
         </tbody>
       </table>
 
-      {/* Kotak peringatan gratifikasi — di bawah kotak tanda tangan */}
-      <div className="ttd-catatan">
-        Petugas Tidak Diperkenankan Menerima Gratifikasi Dalam Bentuk Apapun
-      </div>
-
       <img className="footer-img" src="/footer.png" alt="Footer" />
     </div>
   );
 }
 
-/* ==================== SPPD (per orang) ==================== */
-function DokumenSPPD({ data, sppd }) {
-  const instansi = sppd.instansi || 'Balai Besar POM di Palangka Raya';
+/* ============ LAMPIRAN — halaman daftar nama (landscape), bila peserta > 1 orang ============ */
+export function LampiranPeserta({ data }) {
+  const peserta = data.peserta || [];
+  const tanggal = data.tanggal_st ? tanggalPanjang(data.tanggal_st).toUpperCase() : '';
+
   return (
-    <div className="print-sheet">
-      <img className="kop-img" src="/header.png" alt="Kop surat" />
+    <div className="print-sheet sheet-landscape">
+      {/* Nomor halaman — tengah atas */}
+      <div className="lamp-nomor">-2-</div>
 
-      <div className="judul judul-bold">SURAT PERINTAH PERJALANAN DINAS (SPPD)</div>
+      {/* Dua kotak: kiri lebar & kosong, kanan lebih sempit — tulisan LAMPIRAN di kotak kanan */}
+      <div className="lamp-kotak">
+        <div className="lamp-kotak-kiri" aria-hidden="true" />
+        <div className="lamp-kotak-kanan lamp-kepala">
+          <div>LAMPIRAN</div>
+          <div>SURAT TUGAS</div>
+          <div>NOMOR&nbsp;&nbsp;&nbsp;: {data.nomor_st || ''}</div>
+          <div>TANGGAL&nbsp;: {tanggal}</div>
+        </div>
+      </div>
 
-      <table className="sppd-table">
+      <div className="lamp-judul">DAFTAR NAMA PEGAWAI YANG DIBERI TUGAS</div>
+
+      <table className="lamp-table">
+        <thead>
+          <tr>
+            <th className="c-no">NO</th>
+            <th className="c-nama">NAMA</th>
+            <th className="c-nip">NIP</th>
+            <th className="c-pangkat">PANGKAT/GOLONGAN</th>
+            <th>JABATAN</th>
+          </tr>
+        </thead>
         <tbody>
-          <tr>
-            <td className="no">1.</td>
-            <td style={{ width: '45mm' }}>Pejabat Pembuat Komitmen</td>
-            <td>: {sppd.ppk_nama || data.ppk_nama || ''}</td>
-          </tr>
-          <tr>
-            <td className="no">2.</td>
-            <td>Nama/NIP Pegawai Yang Melaksanakan Perjalanan Dinas</td>
-            <td>: {sppd.nama || ''}{sppd.nip ? ` / ${sppd.nip}` : ''}</td>
-          </tr>
-          <tr>
-            <td className="no">3.</td>
-            <td>
-              a) Pangkat/Golongan<br />
-              b) Jabatan/Instansi<br />
-              c) Tingkat Biaya Perjalanan Dinas
-            </td>
-            <td>
-              <div>: {sppd.pangkat || ''}</div>
-              <div>: {sppd.jabatan || ''} / {instansi}</div>
-              <div>: {sppd.tingkat_biaya || ''}</div>
-            </td>
-          </tr>
-          <tr>
-            <td className="no">4.</td>
-            <td>Maksud Perjalanan Dinas</td>
-            <td>: {data.kegiatan || data.untuk || ''}</td>
-          </tr>
-          <tr>
-            <td className="no">5.</td>
-            <td>Alat angkut yang dipergunakan</td>
-            <td>: {sppd.alat_angkut === 'udara' ? 'Angkutan Udara' : sppd.alat_angkut === 'darat' ? 'Angkutan Darat' : ''}</td>
-          </tr>
-          <tr>
-            <td className="no">6.</td>
-            <td>a. Tempat Berangkat<br />b. Tempat Tujuan</td>
-            <td>
-              <div>: {sppd.tempat_berangkat || ''}</div>
-              <div>: {sppd.tempat_tujuan || data.kota_kab_kecamatan || ''}</div>
-            </td>
-          </tr>
-          <tr>
-            <td className="no">7.</td>
-            <td>a. Lama Perjalanan Dinas<br />b. Tanggal Berangkat<br />c. Tanggal harus kembali/tiba di tempat baru *)</td>
-            <td>
-              <div>: {sppd.lama_perjalanan || ''}</div>
-              <div>: {sppd.tanggal_berangkat ? tanggalPanjang(sppd.tanggal_berangkat) : ''}</div>
-              <div>: {sppd.tanggal_kembali ? tanggalPanjang(sppd.tanggal_kembali) : ''}</div>
-            </td>
-          </tr>
-          <tr>
-            <td className="no">8.</td>
-            <td>Pengikut</td>
-            <td>
-              <table className="tb-perjadin">
-                <thead>
-                  <tr>
-                    <td className="center" style={{ width: '8mm' }}>No</td>
-                    <td className="center">Nama</td>
-                    <td className="center" style={{ width: '30mm' }}>Tanggal Lahir</td>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <tr key={n} style={{ height: '7mm' }}>
-                      <td className="center">{n}.</td>
-                      <td />
-                      <td />
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td className="no">9.</td>
-            <td>Pembebanan Anggaran<br />a. Instansi<br />b. Mata Anggaran</td>
-            <td>
-              <div>: {instansi}</div>
-              <div>: {sppd.mata_anggaran || data.mak || ''}</div>
-            </td>
-          </tr>
-          <tr>
-            <td className="no">10.</td>
-            <td>Keterangan Lain-lain</td>
-            <td>: {sppd.keterangan_lain || ''}</td>
-          </tr>
+          {peserta.map((p, i) => (
+            <tr key={i}>
+              <td className="c-no">{i + 1}</td>
+              <td className="c-nama">{p.nama || '-'}</td>
+              <td className="c-nip">{formatNip(p.nip) || '-'}</td>
+              <td>{p.pangkat || '-'}</td>
+              <td>{p.jabatan || '-'}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
 
-      <div className="blok" style={{ marginTop: '6mm' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <tbody>
-            <tr>
-              <td style={{ width: '40mm' }}>Dikeluarkan di</td>
-              <td style={{ width: '10mm' }}>:</td>
-              <td>{data.tempat_terbit || 'Palangka Raya'}</td>
-              <td rowSpan="2" style={{ width: '75mm', textAlign: 'center', verticalAlign: 'top' }}>
-                <div>Pembuat Komitmen,</div>
-                <div style={{ marginTop: '26mm' }} className="nama">
-                  {(sppd.ppk_nama || data.ppk_nama || '').split(' / ')[0]}
-                </div>
-                {sppd.ppk_nip || data.ppk_nip ? <div>NIP. {(sppd.ppk_nip || data.ppk_nip).split(' / ')[0]}</div> : null}
-              </td>
-            </tr>
-            <tr>
-              <td>Pada Tanggal</td>
-              <td>:</td>
-              <td>{data.tanggal_st ? tanggalPanjang(data.tanggal_st) : ''}</td>
-            </tr>
-          </tbody>
-        </table>
+      {/* Tanda tangan — pola 2 kotak juga: kotak kanan lebih sempit, tulisan rata kiri */}
+      <div className="lamp-kotak lamp-ttd">
+        <div className="lamp-kotak-kiri" aria-hidden="true" />
+        <div className="lamp-kotak-kanan">
+          <div>Kepala Balai Besar POM Di Palangka Raya,</div>
+          <div className="ttd-pengirim">{kodeTtd(data)}</div>
+          <div className="lamp-nama">{data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
+        </div>
       </div>
-
-      {/* Kotak peringatan gratifikasi — di bawah kotak tanda tangan */}
-      <div className="ttd-catatan">
-        Petugas Tidak Diperkenankan Menerima Gratifikasi Dalam Bentuk Apapun
-      </div>
-
-      <div className="blok" style={{ marginTop: '4mm', fontSize: '11pt' }}>
-        <table className="tb-perjadin">
-          <tbody>
-            <tr>
-              <td style={{ width: '16mm' }}>Berangkat dari</td>
-              <td style={{ width: '45mm' }}>: {sppd.tempat_berangkat || ''} (Tempat Kedudukan)</td>
-              <td style={{ width: '14mm' }}>Pada Tanggal</td>
-              <td>: {sppd.tanggal_berangkat ? tanggalPanjang(sppd.tanggal_berangkat) : ''}</td>
-              <td>Ke {sppd.tempat_tujuan || data.kota_kab_kecamatan || ''}</td>
-            </tr>
-            <tr>
-              <td>Tiba di</td>
-              <td>: {sppd.tempat_tujuan || data.kota_kab_kecamatan || ''}</td>
-              <td>Pada Tanggal</td>
-              <td>: {sppd.tanggal_kembali ? tanggalPanjang(sppd.tanggal_kembali) : ''}</td>
-              <td />
-            </tr>
-            <tr>
-              <td>Berangkat dari</td>
-              <td>: {sppd.tempat_tujuan || data.kota_kab_kecamatan || ''}</td>
-              <td>Pada Tanggal</td>
-              <td>: {sppd.tanggal_kembali ? tanggalPanjang(sppd.tanggal_kembali) : ''}</td>
-              <td>Ke {sppd.tempat_berangkat || ''}</td>
-            </tr>
-            <tr>
-              <td>Tiba di</td>
-              <td>: {sppd.tempat_berangkat || ''}</td>
-              <td>Pada Tanggal</td>
-              <td />
-              <td />
-            </tr>
-            <tr>
-              <td>Tiba Kembali</td>
-              <td>: {sppd.tempat_berangkat || ''}</td>
-              <td>Pada Tanggal</td>
-              <td />
-              <td />
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div style={{ fontSize: '9.5pt', marginTop: '5mm', textAlign: 'justify' }}>
-        <b>PERHATIAN:</b> Pejabat yang berwenang memberikan SPPD, pegawai yang melakukan perjalanan dinas,
-        para pejabat yang mensahkan tanggal berangkat/tiba, serta bendaharawan bertanggung jawab berdasarkan
-        peraturan-peraturan Keuangan Negara, apabila negara menerima rugi akibat kesalahan, kelalaian dan kealpaan.
-      </div>
-
-      <img className="footer-img" src="/footer.png" alt="Footer" />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 // components/surattugas/FormSuratTugas.js — Form buat / edit Surat Tugas + SPPD
 // Mendukung mode edit lewat query ?id=<surat_tugas_id> (status draft/dikembalikan)
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
 import { axiosInstance } from '../../utils/axiosInstance';
@@ -15,6 +15,19 @@ const MENIMBANG_A_DEFAULT =
   'Bahwa dalam rangka untuk menunjang pelaksanaan tugas dan fungsi Balai Besar POM di Palangka Raya sebagai Unit Pelaksana Teknis di Lingkungan Badan POM;';
 const MENIMBANG_B_DEFAULT =
   'Bahwa untuk memenuhi maksud pada butir a di atas, ditunjuk pegawai Balai Besar POM di Palangka Raya untuk mengikuti kegiatan tersebut.';
+
+// Dasar yang OTOMATIS tercentang saat MEMBUAT ST baru (mode tambah).
+// Dicocokkan lewat kata kunci (huruf kecil, spasi dirapikan) supaya tidak bergantung
+// pada spasi / baris baru di database. Perbarui daftar ini bila aturannya berganti.
+const DASAR_DEFAULT_KATA_KUNCI = [
+  'nomor 1 tahun 2026',
+  'organisasi dan tata kerja unit pelaksana teknis',
+];
+
+function isDasarDefault(isi) {
+  const teks = String(isi || '').toLowerCase().replace(/\s+/g, ' ');
+  return DASAR_DEFAULT_KATA_KUNCI.every((k) => teks.includes(k));
+}
 
 const emptyPeserta = () => ({
   nama: '', nip: '', pangkat: '', jabatan: '', instansi: INSTANSI, sumber: 'manual',
@@ -63,6 +76,83 @@ function field(label, value, onChange, opts = {}) {
   );
 }
 
+/* Pencarian nama peserta yang terhubung ke user Keycloak.
+   Ketik nama atau NIP → daftar user cocok muncul; klik salah satu untuk mengisi
+   Nama + NIP + Jabatan otomatis. Tetap bisa diisi manual bila user tidak ada. */
+function NamaPesertaPicker({ value, users, loading, onRequestLoad, onChange, onPick }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  // tutup dropdown saat klik di luar
+  useEffect(() => {
+    const onDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  const term = String(value || '').trim().toLowerCase();
+  const termNip = term.replace(/\s/g, '');
+  const hasil = (term
+    ? users.filter((u) =>
+        String(u.nama || '').toLowerCase().includes(term) ||
+        (termNip && String(u.nip || '').replace(/\s/g, '').includes(termNip)))
+    : users
+  ).slice(0, 8);
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+        Nama Lengkap &amp; Gelar *
+        <span className="ml-1 font-normal text-amber-600 dark:text-amber-400">· cari di Keycloak</span>
+      </span>
+      <input
+        className={inputCls}
+        value={value || ''}
+        autoComplete="off"
+        placeholder="ketik nama/NIP untuk mencari, atau isi manual"
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => { onRequestLoad(); setOpen(true); }}
+      />
+
+      {open && (
+        <div className="absolute z-30 mt-1 w-full max-h-60 overflow-auto rounded-xl border border-stone-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl">
+          {loading && (
+            <div className="px-3 py-2 text-xs text-zinc-500 inline-flex items-center gap-2">
+              <FaSpinner className="w-3 h-3 animate-spin" /> Memuat user Keycloak…
+            </div>
+          )}
+          {!loading && hasil.length === 0 && (
+            <div className="px-3 py-2 text-xs text-zinc-500">
+              {users.length === 0
+                ? 'Data user Keycloak tidak tersedia — silakan isi manual.'
+                : 'Tidak ada user yang cocok.'}
+            </div>
+          )}
+          {!loading && hasil.map((u) => (
+            <button
+              type="button"
+              key={u.id || u.username}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onPick(u); setOpen(false); }}
+              className="w-full text-left px-3 py-2 hover:bg-amber-50 dark:hover:bg-amber-500/10"
+            >
+              <span className="block text-sm text-zinc-800 dark:text-zinc-100">{u.nama}</span>
+              <span className="block text-[11px] text-zinc-500">
+                {u.nip ? `NIP ${u.nip}` : 'NIP —'}{u.pangkat ? ` · ${u.pangkat}` : ''}
+              </span>
+              {u.jabatan && (
+                <span className="block text-[11px] text-zinc-400">{u.jabatan}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FormSuratTugas() {
   const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
@@ -98,15 +188,43 @@ export default function FormSuratTugas() {
   const [katimLoading, setKatimLoading] = useState(false);
   const [selectedKatim, setSelectedKatim] = useState('');
 
+  // ---------- Daftar user Keycloak (pencarian "Nama Lengkap & Gelar" peserta) ----------
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const usersFetchedRef = useRef(false);
+
+  // dimuat saat kolom nama pertama kali difokuskan (dipakai bersama semua baris peserta)
+  const loadUsers = useCallback(async () => {
+    if (usersFetchedRef.current) return;
+    usersFetchedRef.current = true;
+    setUsersLoading(true);
+    try {
+      const res = await axiosInstance.get('/keycloak/users/all-simple');
+      setUsers(res.data?.data || []);
+    } catch (e) {
+      usersFetchedRef.current = false; // gagal → biarkan dicoba lagi saat fokus berikutnya
+    } finally {
+      setUsersLoading(false);
+    }
+  }, []);
+
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
   // ---------- muat dasar aturan (global admin + milik user) ----------
   const loadDasar = useCallback(async () => {
     try {
       const res = await axiosInstance.get('/dasaraturan', { params: { jenis: 'dasar' } });
-      setDasarOptions((res.data?.data || []).filter((d) => d.is_active));
+      const items = (res.data?.data || []).filter((d) => d.is_active);
+      setDasarOptions(items);
+      // Mode TAMBAH: centang otomatis dasar default.
+      // Mode EDIT: dasar mengikuti data yang tersimpan (lihat effect pemuatan detail).
+      if (!editId) {
+        setDasarSelected((arr) =>
+          arr.length ? arr : items.filter((d) => isDasarDefault(d.isi)).map((d) => ({ id: d.id, isi: d.isi }))
+        );
+      }
     } catch (e) { /* abaikan */ }
-  }, []);
+  }, [editId]);
 
   // ---------- muat menimbang global (dikelola Admin / Arsiparis) ----------
   const loadMenimbang = useCallback(async () => {
@@ -440,7 +558,7 @@ export default function FormSuratTugas() {
                 {dasarOptions.length === 0 ? (
                   <p className="text-sm text-zinc-500">
                     Belum ada dasar aturan (global dari Admin maupun milik Anda). Silakan cek menu{' '}
-                    <a href="/pengaturan" className="text-amber-600 font-medium underline">Dasar Aturan</a>.
+                    <a href="/pengaturan/dasaraturan" className="text-amber-600 font-medium underline">Dasar Aturan</a>.
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -524,7 +642,19 @@ export default function FormSuratTugas() {
                         </button>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {field('Nama Lengkap & Gelar *', p.nama, (v) => updatePeserta(i, { nama: v }))}
+                        <NamaPesertaPicker
+                          value={p.nama}
+                          users={users}
+                          loading={usersLoading}
+                          onRequestLoad={loadUsers}
+                          onChange={(v) => updatePeserta(i, { nama: v })}
+                          onPick={(u) => updatePeserta(i, {
+                            nama: u.nama || p.nama,
+                            nip: u.nip || p.nip,
+                            pangkat: u.pangkat || p.pangkat,
+                            jabatan: u.jabatan || p.jabatan,
+                          })}
+                        />
                         {field('NIP', p.nip, (v) => updatePeserta(i, { nip: v }))}
                         {field('Pangkat / Golongan', p.pangkat, (v) => updatePeserta(i, { pangkat: v }), { placeholder: 'mis. Pembina / IV a' })}
                         <div className="sm:col-span-3">

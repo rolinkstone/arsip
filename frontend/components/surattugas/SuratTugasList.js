@@ -179,6 +179,8 @@ export default function SuratTugasList() {
         <div className="space-y-3">
           {list.map((item) => {
             const meta = statusMeta(item.status);
+            // ST milik user lain → user ini hanya tercantum sebagai PESERTA (read-only)
+            const isMine = !session?.user?.id || item.user_key === session.user.id;
             return (
               <div
                 key={item.id}
@@ -198,6 +200,11 @@ export default function SuratTugasList() {
                         Tanpa SPPD
                       </span>
                     )}
+                    {!isMine && (
+                      <span className="inline-flex items-center rounded-full bg-sky-50 dark:bg-sky-500/10 text-[9px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-300 px-2 py-0.5">
+                        Anda peserta
+                      </span>
+                    )}
                   </div>
                   <p className="mt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2">
                     {item.kegiatan || '(tanpa kegiatan)'}
@@ -212,6 +219,7 @@ export default function SuratTugasList() {
                       {item.jml_peserta} peserta
                       {item.tanpa_sppd ? ' · tanpa SPPD' : ` · ${item.jml_sppd} SPPD`}
                     </span>
+                    {!isMine && item.username && <span>Dibuat oleh: {item.username}</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

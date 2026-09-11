@@ -17,6 +17,7 @@ const cors = require('cors');
 const https = require('https');
 const qs = require('qs');
 const jwt = require('jsonwebtoken');
+const jwkToPem = require('jwk-to-pem');
 const axios = require('axios');
 require('dotenv').config();
 
@@ -26,7 +27,49 @@ const PORT = process.env.PORT || 5004;
 // ========== MIDDLEWARE DASAR ==========
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+
+// ---------- CORS ----------
+// Hanya origin lokal/jaringan privat + daftar di CORS_ORIGIN (pisahkan dengan koma).
+// Tanpa Origin (curl, server-ke-server, headless print) tetap diizinkan.
+const originDiizinkan = (process.env.CORS_ORIGIN || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+
+function originBoleh(origin) {
+    if (!origin) return true;
+    if (originDiizinkan.includes(origin)) return true;
+    try {
+        const { hostname, protocol } = new URL(origin);
+        if (protocol !== 'http:' && protocol !== 'https:') return false;
+        if (['localhost', '127.0.0.1', '::1'].includes(hostname)) return true;
+        // alamat privat (aplikasi ini dipakai di jaringan kantor)
+        if (/^10\./.test(hostname)) return true;
+        if (/^192\.168\./.test(hostname)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+        return false;
+    } catch (e) {
+        return false;
+    }
+}
+
+app.use(cors({
+    origin(origin, cb) {
+        if (originBoleh(origin)) return cb(null, true);
+        console.warn('⛔ CORS ditolak untuk origin:', origin);
+        return cb(null, false);   // tanpa header CORS → browser memblokir
+    }
+}));
+
+// ---------- Anti brute-force untuk login ----------
+// (sebelumnya /api/login bebas dicoba sebanyak apa pun)
+const rateLimit = require('express-rate-limit');
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,     // 15 menit
+    limit: 10,                    // 10 percobaan per IP per jendela
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Terlalu banyak percobaan login. Silakan coba lagi dalam 15 menit.' }
+});
+app.use('/api/login', loginLimiter);
 
 // ========== KEYCLOAK CONFIG ==========
 const KEYCLOAK_CONFIG = {
@@ -37,6 +80,43 @@ const KEYCLOAK_CONFIG = {
 };
 
 const httpsAgent = new https.Agent({ rejectUnauthorized: true });
+
+// ========== VERIFIKASI TANDA TANGAN TOKEN (JWKS Keycloak) ==========
+// PENTING: sebelumnya token hanya di-DECODE (baca base64) tanpa verifikasi tanda tangan,
+// sehingga siapa pun bisa mengarang token (mis. mengaku admin) lalu mengakses semua data.
+// Sekarang tanda tangan diverifikasi memakai public key (JWKS) milik realm Keycloak.
+let jwksCache = { keys: null, at: 0 };
+
+async function getJwks(force = false) {
+    const masihSegar = jwksCache.keys && (Date.now() - jwksCache.at) < 10 * 60 * 1000;
+    if (masihSegar && !force) return jwksCache.keys;
+
+    const url = `${KEYCLOAK_CONFIG.url}/realms/${KEYCLOAK_CONFIG.realm}/protocol/openid-connect/certs`;
+    const res = await axios.get(url, { httpsAgent, timeout: 10000 });
+    jwksCache = { keys: res.data?.keys || [], at: Date.now() };
+    return jwksCache.keys;
+}
+
+async function verifikasiToken(token) {
+    const decoded = jwt.decode(token, { complete: true });
+    if (!decoded || !decoded.header || !decoded.payload) throw new Error('format token tidak dikenali');
+
+    const payload = decoded.payload;
+    if (payload.exp && payload.exp < Date.now() / 1000) throw new Error('token kedaluwarsa');
+
+    let keys = await getJwks();
+    let jwk = keys.find((k) => k.kid === decoded.header.kid);
+    if (!jwk) {
+        // kemungkinan public key baru dirotasi → ambil ulang sekali
+        keys = await getJwks(true);
+        jwk = keys.find((k) => k.kid === decoded.header.kid) || keys[0];
+    }
+    if (!jwk) throw new Error('public key tidak ditemukan');
+
+    // Kalau tanda tangan tidak cocok / token palsu, baris ini melempar error.
+    jwt.verify(token, jwkToPem(jwk), { algorithms: ['RS256'] });
+    return payload;
+}
 
 // ========== AUTH MIDDLEWARE ==========
 // Public route yang TIDAK membutuhkan token
@@ -54,10 +134,8 @@ const authMiddleware = async (req, res, next) => {
 
     const token = authHeader.slice(7);
     try {
-        const decoded = jwt.decode(token);
-        if (!decoded || (decoded.exp && decoded.exp < Date.now() / 1000)) {
-            return res.status(401).json({ success: false, message: 'Token invalid or expired' });
-        }
+        // Verifikasi tanda tangan token ke Keycloak (bukan sekadar decode).
+        const decoded = await verifikasiToken(token);
 
         req.user = {
             id: decoded.sub,
@@ -68,7 +146,8 @@ const authMiddleware = async (req, res, next) => {
         };
         next();
     } catch (error) {
-        return res.status(401).json({ success: false, message: 'Invalid token' });
+        console.warn('⛔ Token ditolak:', error.message);
+        return res.status(401).json({ success: false, message: 'Token tidak valid atau kedaluwarsa' });
     }
 };
 
@@ -134,6 +213,7 @@ app.use('/api/keycloak', require('./routes/keycloak'));
 // ===== MODUL PERSURATAN (ST & SPPD) =====
 app.use('/api/surattugas', require('./routes/surattugas'));
 app.use('/api/dasaraturan', require('./routes/dasaraturan'));
+app.use('/api/penomoran', require('./routes/penomoran'));
 app.use('/api/talawang', require('./routes/talawang'));
 
 // ========== 404 HANDLER ==========
