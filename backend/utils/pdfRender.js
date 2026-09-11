@@ -60,7 +60,12 @@ async function getBrowser() {
     browserPromise = puppeteer.launch({
         executablePath,
         headless: true,
-        args: ['--no-sandbox', '--disable-gpu'],
+        // --no-sandbox : wajib saat berjalan di dalam container.
+        // --disable-gpu : tidak ada GPU di server.
+        // --disable-dev-shm-usage : /dev/shm di container biasanya hanya 64MB →
+        //   Chrome bisa crash saat mencetak dokumen besar; ini memindahkan
+        //   berkas sementaranya ke /tmp.
+        args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
     });
     return browserPromise;
 }

@@ -4,9 +4,30 @@
 # Semua nilai rahasia TIDAK ditulis di file ini. Docker Compose membacanya
 # dari file `.env` di folder yang sama (lihat `.env.example`).
 #
-# Cara pakai di server:
-#   1) cp .env.example .env    lalu isi nilainya (khususnya DOMAIN PUBLIK)
-#   2) docker compose up -d --build
+# Cara pakai di server (URUTAN PENTING):
+#   1) git pull
+#   2) cp .env.example .env   → isi semua nilainya. Wajib benar:
+#        NEXTAUTH_URL        = https://<domain>        (BUKAN localhost!)
+#        NEXT_PUBLIC_API_URL = https://<domain>/api    (ter-bake saat build)
+#        CORS_ORIGIN         = https://<domain>
+#      JANGAN menyalin `.env` dari laptop (isinya localhost).
+#      Verifikasi:  docker compose config | grep -E 'NEXTAUTH_URL|NEXT_PUBLIC_API_URL'
+#   3) docker compose build      (NEXT_PUBLIC_* di-bake di langkah INI)
+#   4) docker compose up -d
+#      Cek: docker compose ps   (kolom STATUS harus "healthy" setelah ± 1 menit)
+#
+# Prasyarat di server:
+#   - Docker + plugin docker compose.
+#   - MySQL jalan di host (127.0.0.1:3306) dan database sudah dimigrasi
+#     (lihat data/schema/README.md — nama DB production: surat_bbpompky).
+#   - Port host berikut belum dipakai proses lain: PORT_BACKEND (5004),
+#     PORT_FRONTEND (3005).
+#   - nginx/traefik meneruskan domain publik ke:
+#       https://<domain>/          → http://127.0.0.1:3005  (frontend)
+#       https://<domain>/api/auth/ → http://127.0.0.1:3005  (NextAuth — DI FRONTEND!)
+#       https://<domain>/api/      → http://127.0.0.1:5004  (backend Express)
+#     Backend memakai network_mode: host → kalau nginx dijalankan sebagai
+#     CONTAINER, jangan pakai 127.0.0.1; pakai IP host / host.docker.internal.
 #
 # PERBEDAAN dari versi development yang lama:
 #   - TIDAK ADA bind-mount kode sumber (./backend:/usr/src/app dan
@@ -47,8 +68,14 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN}
       - NODE_ENV=production
       - PORT=${PORT_BACKEND}
-      # Integrasi TALAWANG (sumber kegiatan & nominatif). Wajib diisi bila
-      # alamatnya bukan http://localhost:5000 di server yang sama.
+      # Zona waktu container supaya jam pada log & tanggal ikut WIB
+      # (server MySQL di host sudah memakai WIB).
+      - TZ=${TZ:-Asia/Jakarta}
+      # Integrasi TALAWANG (sumber kegiatan & nominatif pegawai).
+      # PENTING: talawang-backend memakai network_mode: host (tanpa IP/port
+      # container) dan backend ini juga host networking → pakai alamat+port di
+      # HOST, mis. http://127.0.0.1:5000. NAMA CONTAINER ("talawang-backend")
+      # TIDAK BISA dipakai: DNS internal Docker tidak aktif pada mode host.
       - TALAWANG_API_URL=${TALAWANG_API_URL}
       # Chrome/Chromium untuk fitur "Unduh PDF". Kosongkan bila ingin dicari
       # otomatis (lihat daftar di backend/utils/pdfRender.js). Di server Linux
@@ -61,6 +88,13 @@ services:
     volumes:
       # Mount folder data untuk backend (opsional, saat ini belum dipakai)
       - ./data/backend:/data
+    healthcheck:
+      # /api/health = route publik backend (lihat backend/server.js)
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:${PORT_BACKEND}/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     logging:
       driver: json-file
       options:
@@ -86,6 +120,8 @@ services:
       - "127.0.0.1:${PORT_FRONTEND}:${PORT_FRONTEND}"
     environment:
       - NODE_ENV=production
+      # Zona waktu container (log & tanggal ikut WIB).
+      - TZ=${TZ:-Asia/Jakarta}
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
       - NEXT_PUBLIC_KEYCLOAK_ISSUER=${NEXT_PUBLIC_KEYCLOAK_ISSUER}
       - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=${NEXT_PUBLIC_KEYCLOAK_CLIENT_ID}
@@ -105,6 +141,13 @@ services:
       - ./data/frontend:/data
     depends_on:
       - backend
+    healthcheck:
+      # Port di dalam container selalu 3005 (dikunci script "next start -p 3005").
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3005/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     logging:
       driver: json-file
       options:
