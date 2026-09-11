@@ -1,13 +1,35 @@
 # ============================================================
-# Semua nilai rahasia TIDAK ditulis di file ini.
-# Docker Compose membacanya dari file `.env` di folder yang sama
-# (lihat `.env.example` untuk daftar variabel yang wajib diisi).
+# docker-compose.yml — PRODUCTION (ECIPAR POM: Surat Tugas & SPPD)
+#
+# Semua nilai rahasia TIDAK ditulis di file ini. Docker Compose membacanya
+# dari file `.env` di folder yang sama (lihat `.env.example`).
+#
+# Cara pakai di server:
+#   1) cp .env.example .env    lalu isi nilainya (khususnya DOMAIN PUBLIK)
+#   2) docker compose up -d --build
+#
+# PERBEDAAN dari versi development yang lama:
+#   - TIDAK ADA bind-mount kode sumber (./backend:/usr/src/app dan
+#     ./frontend:/usr/src/app). Dulu mount itu MENIMPA hasil build di dalam
+#     image, sehingga image production tidak pernah benar-benar terpakai.
+#   - Frontend hanya bind ke 127.0.0.1 → hanya nginx/traefik di host yang
+#     bisa meneruskan; port tidak terbuka ke jaringan luar.
+#   - Backend TETAP network_mode: host (MySQL ada di host 127.0.0.1:3306).
+#   - Ditambah batas ukuran log agar disk server tidak penuh.
 # ============================================================
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
     container_name: tabela-backend
     restart: unless-stopped
+    # ⚠️ network_mode: host hanya bekerja di Linux (server).
+    #    Alasannya: MySQL ada di host pada 127.0.0.1:3306 — dengan mode host,
+    #    "127.0.0.1" di dalam backend = host, jadi DB_HOST tetap benar.
+    #    Konsekuensi: backend TIDAK memakai `ports:` (memakai port host).
+    #    Ingin mode bridge? Hapus network_mode di bawah, tambahkan
+    #      extra_hosts: ["host.docker.internal:host-gateway"]
+    #    lalu ubah DB_HOST=host.docker.internal di .env
     network_mode: "host"
     environment:
       - DB_HOST=${DB_HOST}
@@ -25,16 +47,25 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN}
       - NODE_ENV=production
       - PORT=${PORT_BACKEND}
-      # Tambahkan environment variable untuk path data
+      # Integrasi TALAWANG (sumber kegiatan & nominatif). Wajib diisi bila
+      # alamatnya bukan http://localhost:5000 di server yang sama.
+      - TALAWANG_API_URL=${TALAWANG_API_URL}
+      # Chrome/Chromium untuk fitur "Unduh PDF". Kosongkan bila ingin dicari
+      # otomatis (lihat daftar di backend/utils/pdfRender.js). Di server Linux
+      # umumnya: /usr/bin/chromium  atau  /usr/bin/google-chrome
+      - CHROME_PATH=${CHROME_PATH}
+      # (path data lama — belum ada fitur yang menulis ke sini, aman dibiarkan)
       - DATA_PATH=/data
       - LOGS_PATH=/data/logs
       - UPLOADS_PATH=/data/uploads
     volumes:
-      # Mount folder data untuk backend
+      # Mount folder data untuk backend (opsional, saat ini belum dipakai)
       - ./data/backend:/data
-      # Untuk development - kode sumber
-      - ./backend:/usr/src/app
-      - /usr/src/app/node_modules
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build: 
@@ -48,7 +79,11 @@ services:
     container_name: tabela-frontend
     restart: unless-stopped
     ports:
-      - "${PORT_FRONTEND}:${PORT_FRONTEND}"  # ⭐ Host → Container
+      # Hanya dari localhost → yang meneruskan ke publik adalah nginx/traefik
+      # di server (port tidak terbuka ke jaringan luar).
+      # ⚠️ PORT_FRONTEND harus 3005: frontend/package.json memakai script
+      #    "start": "next start -p 3005" sehingga portnya ditentukan di sana.
+      - "127.0.0.1:${PORT_FRONTEND}:${PORT_FRONTEND}"
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
@@ -66,11 +101,12 @@ services:
       - CACHE_PATH=/data/.next/cache
       - PUBLIC_UPLOADS_PATH=/data/public/uploads
     volumes:
-      # Mount folder data untuk frontend
+      # Mount folder data untuk frontend (opsional, saat ini belum dipakai)
       - ./data/frontend:/data
-      # Untuk development - kode sumber
-      - ./frontend:/usr/src/app
-      - /usr/src/app/node_modules
-      - /usr/src/app/.next
     depends_on:
       - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

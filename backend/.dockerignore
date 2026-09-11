@@ -1,0 +1,23 @@
+# ------------------------------------------------------------
+# Jangan ikutkan berkas lokal ke dalam image backend.
+# Penting: tanpa file ini, `COPY . .` di Dockerfile akan menyalin
+# node_modules milik Windows/host ke atas node_modules hasil
+# `npm install` di dalam image.
+# ------------------------------------------------------------
+node_modules
+npm-debug.log*
+
+# Rahasia lokal — jangan masuk image.
+# Sejak Dockerfile TIDAK lagi menyalin `.env.production` (variabel dikirim oleh
+# docker-compose saat runtime), SEMUA berkas .env diblokir dari image.
+.env
+.env.local
+.env.production
+.env.example
+
+# Berkas kerja/uji yang tidak perlu ikut
+tmp-*.js
+uploads
+*.log
+.git
+.gitignore

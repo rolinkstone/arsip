@@ -10,9 +10,37 @@ Folder ini berisi migrasi SQL untuk aplikasi **Persuratan / Arsip Surat (ECIPAR 
 Jalankan migrasi secara berurutan (urut nomor prefix):
 
 ```bash
-# Dari root proyek
+# Dari root proyek (DEVELOPMENT — nama database: bpom_arsip_surat)
 mysql -h 127.0.0.1 -P 3306 -u root < data/schema/001_create_database.sql
 mysql -h 127.0.0.1 -P 3306 -u root bpom_arsip_surat < data/schema/002_xxx.sql
+```
+
+### ⚠️ Nama database di PRODUCTION BERBEDA
+
+Semua file `00X_*.sql` di folder ini berisi `USE bpom_arsip_surat;`, dan
+`001_create_database.sql` membuat database dengan nama itu. Di server
+production nama databasenya **`surat_bbpompky`** (lihat `DB_NAME` di `.env`).
+Kalau file dijalankan apa adanya, migrasi akan masuk ke database yang SALAH.
+
+Urutan yang benar di server (hanya sekali, saat menyiapkan database):
+
+```bash
+# 1) buat database production
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS surat_bbpompky CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+# 2) buat salinan skrip dengan nama database production (file asli tidak diubah)
+mkdir -p /tmp/migrasi
+for f in data/schema/00*.sql; do sed 's/bpom_arsip_surat/surat_bbpompky/g' "$f" > "/tmp/migrasi/$(basename "$f")"; done
+
+# 3) jalankan berurutan
+for f in /tmp/migrasi/00*.sql; do echo "== $(basename "$f")"; mysql -u root -p surat_bbpompky < "$f"; done
+```
+
+Setelah itu jangan lupa beri hak akses user aplikasi (production: `bbpom_surat_arsip`):
+
+```sql
+GRANT ALL PRIVILEGES ON surat_bbpompky.* TO 'bbpom_surat_arsip'@'localhost';
+FLUSH PRIVILEGES;
 ```
 
 ## Aturan penulisan migrasi
