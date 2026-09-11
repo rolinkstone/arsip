@@ -10,7 +10,7 @@
  *  - Konten terang (stone-100 / putih) ↔ gelap (zinc-950 / zinc-900)
  *  - Top bar: toggle dark mode, toggle minimize, menu user
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
@@ -19,6 +19,12 @@ import {
   FaChevronLeft, FaChevronRight, FaPlus, FaSun, FaMoon, FaArchive,
   FaFileSignature, FaBookOpen, FaCog, FaStamp,
 } from 'react-icons/fa';
+import NotifikasiBell from './NotifikasiBell';
+import { axiosInstance } from '../utils/axiosInstance';
+
+// Jeda penyegaran notifikasi "perlu tindakan" (ms). Dipakai bersama oleh lonceng
+// di top bar dan badge menu "Surat Tugas" — satu fetch untuk keduanya.
+const POLL_NOTIF_MS = 60000;
 
 // Menu dengan `children` = menu induk bersubmenu (bisa dibuka/ditutup).
 // `adminOnly: true` pada submenu = hanya tampil untuk role admin_arsiparis
@@ -144,6 +150,39 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
   const roleLabel =
     typeof user.role === 'string' && user.role ? user.role : 'User';
 
+  // ===== Notifikasi "perlu tindakan" (katim & admin_arsiparis) =====
+  // Diambil SEKALI di sini lalu dipakai bersama: lonceng di top bar + badge menu
+  // "Surat Tugas". Sumbernya data surat_tugas (lihat backend/routes/notifikasi.js),
+  // jadi tidak perlu tabel notifikasi & tidak ada status "sudah dibaca".
+  const adaAntreanPeran = !!(user.isKatim || user.isAdminArsiparis);
+  const [notif, setNotif] = useState({ items: [], loading: false });
+
+  const muatNotif = useCallback(async () => {
+    try {
+      setNotif((n) => ({ ...n, loading: true }));
+      const res = await axiosInstance.get('/notifikasi');
+      setNotif({ items: res.data?.data?.items || [], loading: false });
+    } catch (e) {
+      // Notifikasi bersifat pelengkap — jangan sampai mengganggu halaman.
+      console.warn('Gagal memuat notifikasi:', e.response?.data?.message || e.message);
+      setNotif((n) => ({ ...n, loading: false }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!adaAntreanPeran) return undefined;
+    muatNotif();
+    const t = setInterval(muatNotif, POLL_NOTIF_MS);
+    return () => clearInterval(t);
+  }, [adaAntreanPeran, muatNotif]);
+
+  // Segarkan lagi setiap pindah halaman (mis. selesai verifikasi ST).
+  useEffect(() => {
+    if (adaAntreanPeran) muatNotif();
+  }, [router.pathname, adaAntreanPeran, muatNotif]);
+
+  const jumlahNotif = notif.items.length;
+
   const today = new Date().toLocaleDateString('id-ID', {
     weekday: 'long',
     day: 'numeric',
@@ -216,6 +255,9 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
 
               // ---- menu biasa (tanpa submenu) ----
               if (!children.length) {
+                // Badge "perlu tindakan" hanya pada menu Surat Tugas.
+                // Sidebar mengecil: cukup titik merah di pojok ikon.
+                const badgeMenu = item.href === '/surattugas' && adaAntreanPeran ? jumlahNotif : 0;
                 return (
                   <Link
                     key={item.href}
@@ -223,7 +265,7 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
                     onClick={() => setSidebarOpen(false)}
                     title={isCollapsed ? item.label : undefined}
                     aria-label={item.label}
-                    className={`flex items-center rounded-lg text-sm font-medium transition-colors ${
+                    className={`relative flex items-center rounded-lg text-sm font-medium transition-colors ${
                       isCollapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3.5 py-2.5'
                     } ${
                       isActive(item.href)
@@ -232,7 +274,19 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    {!isCollapsed && <span>{item.label}</span>}
+                    {!isCollapsed && <span className="flex-1">{item.label}</span>}
+                    {badgeMenu > 0 && (
+                      isCollapsed ? (
+                        <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-red-500" />
+                      ) : (
+                        <span
+                          className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center"
+                          title={`${badgeMenu} surat tugas menunggu tindakan`}
+                        >
+                          {badgeMenu > 99 ? '99+' : badgeMenu}
+                        </span>
+                      )
+                    )}
                   </Link>
                 );
               }
@@ -386,6 +440,9 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
           </div>
 
           <div className="ml-auto flex items-center gap-1">
+            {/* Notifikasi "perlu tindakan" (muncul hanya untuk katim & admin arsiparis) */}
+            {adaAntreanPeran && <NotifikasiBell items={notif.items} loading={notif.loading} />}
+
             {/* Dark mode toggle */}
             <button
               onClick={toggleDark}

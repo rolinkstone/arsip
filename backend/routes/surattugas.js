@@ -147,6 +147,19 @@ router.get('/', async (req, res) => {
     const where = [`(${akses.sql})`];
     const params = [...akses.params];
 
+    // Penanda "SAYA benar-benar PESERTA ST ini" — dipakai daftar untuk badge
+    // "Anda peserta". Sebelumnya frontend hanya MENEBAK dari "bukan ST milik saya",
+    // sehingga katim / admin_arsiparis (yang memang melihat ST orang lain) ikut
+    // dilabeli sebagai peserta. Aturannya disamakan dengan aksesWhere:
+    // cocokkan NIP peserta tanpa spasi dengan NIP dari username Keycloak.
+    const nipSaya = nomorDariUsername(getIdentity(req).username);
+    const kolomPeserta = nipSaya
+        ? `EXISTS (SELECT 1 FROM surat_tugas_peserta sp WHERE sp.surat_tugas_id = st.id
+                    AND REPLACE(sp.nip, ' ', '') = ?) AS saya_peserta`
+        : '0 AS saya_peserta';
+    // PENTING: parameter untuk placeholder di SELECT harus berada SEBELUM parameter WHERE.
+    if (nipSaya) params.unshift(nipSaya);
+
     if (status && status !== 'all') {
         where.push('status = ?');
         params.push(status);
@@ -163,14 +176,19 @@ router.get('/', async (req, res) => {
                st.user_key, st.username,
                st.created_at, st.updated_at,
                (SELECT COUNT(*) FROM surat_tugas_peserta p WHERE p.surat_tugas_id = st.id) AS jml_peserta,
-               (SELECT COUNT(*) FROM sppd s2 WHERE s2.surat_tugas_id = st.id) AS jml_sppd
+               (SELECT COUNT(*) FROM sppd s2 WHERE s2.surat_tugas_id = st.id) AS jml_sppd,
+               ${kolomPeserta}
         FROM surat_tugas st
         ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
         ORDER BY st.id DESC`;
 
     try {
         const [rows] = await db.query(sql, params);
-        rows.forEach(r => { r.tanggal_st = toSqlDate(r.tanggal_st); });
+        rows.forEach(r => {
+            r.tanggal_st = toSqlDate(r.tanggal_st);
+            // MySQL mengembalikan 0/1 → jadikan boolean supaya rapi di JSON.
+            r.saya_peserta = !!r.saya_peserta;
+        });
         res.json({ success: true, data: rows, count: rows.length });
     } catch (e) {
         console.error('❌ GET /surattugas:', e);

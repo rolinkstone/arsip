@@ -179,8 +179,15 @@ export default function SuratTugasList() {
         <div className="space-y-3">
           {list.map((item) => {
             const meta = statusMeta(item.status);
-            // ST milik user lain → user ini hanya tercantum sebagai PESERTA (read-only)
             const isMine = !session?.user?.id || item.user_key === session.user.id;
+            // Badge "Anda peserta" hanya bila API MEMASTIKAN user ini peserta ST
+            // (item.saya_peserta). Dulu dipakai `!isMine`, sehingga katim / admin
+            // arsiparis yang memang melihat ST orang lain ikut dilabeli peserta.
+            // Cadangan bila backend belum diperbarui (field belum ada): untuk
+            // pengguna biasa, ST orang lain di daftarnya memang berarti dia peserta.
+            const sayaPeserta = item.saya_peserta === undefined
+              ? (!isMine && !isKatim && !isAdminArsiparis)
+              : (!!item.saya_peserta && !isMine);
             return (
               <div
                 key={item.id}
@@ -200,7 +207,7 @@ export default function SuratTugasList() {
                         Tanpa SPPD
                       </span>
                     )}
-                    {!isMine && (
+                    {sayaPeserta && (
                       <span className="inline-flex items-center rounded-full bg-sky-50 dark:bg-sky-500/10 text-[9px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-300 px-2 py-0.5">
                         Anda peserta
                       </span>

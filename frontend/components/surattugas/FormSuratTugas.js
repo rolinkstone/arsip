@@ -348,7 +348,10 @@ export default function FormSuratTugas() {
         kegiatanId: d.id, kegiatanSumber: 'talawang',
         kegiatan: d.kegiatan || '', mak: d.mak || '', kota: d.kota_kab_kecamatan || '',
         tglMulai: d.rencana_tanggal_pelaksanaan || '', tglSelesai: d.rencana_tanggal_pelaksanaan_akhir || '',
-        untuk: d.kegiatan ? `Mengikuti ${d.kegiatan}` : '',
+        // "Untuk" diisi NAMA KEGIATAN apa adanya — TANPA awalan "Mengikuti".
+        // (Permintaan user 2026-09-11: awalan itu dulu ditambahkan otomatis.
+        //  Kalau perlu, bisa diketik manual di kolom "Untuk" pada form.)
+        untuk: d.kegiatan || '',
         ppkId: d.ppk_id || '', ppkNama: d.ppk_nama || '', ppkNip: d.ppk_nip || '', ppkManual: false,
       });
       setKegiatanResults([]);

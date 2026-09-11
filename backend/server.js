@@ -214,6 +214,9 @@ app.use('/api/keycloak', require('./routes/keycloak'));
 app.use('/api/surattugas', require('./routes/surattugas'));
 app.use('/api/dasaraturan', require('./routes/dasaraturan'));
 app.use('/api/penomoran', require('./routes/penomoran'));
+// Notifikasi "perlu tindakan" (katim & admin_arsiparis). Dihitung langsung dari
+// data surat_tugas — tidak memakai tabel notifikasi sendiri.
+app.use('/api/notifikasi', require('./routes/notifikasi'));
 app.use('/api/talawang', require('./routes/talawang'));
 
 // ========== 404 HANDLER ==========
