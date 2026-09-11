@@ -95,18 +95,23 @@ function aksesWhere(req, alias = 'surat_tugas') {
         params.push(nipSaya);
     };
 
+    // ST MILIK SENDIRI selalu terlihat — termasuk untuk akun berperan GANDA
+    // (mis. 'user' + 'admin_arsiparis' karena orangnya juga ikut dinas, atau
+    // 'user' + 'katim'). Dulu cabang peran memakai if/else sehingga saling
+    // meniadakan: ST yang dibuat sendiri oleh akun berperan ganda TIDAK muncul
+    // di daftarnya sendiri (bikin draft, tapi tidak bisa dilihat lagi).
+    bagian.push(`${A}.user_key = ?`);
+    params.push(user_key);
+
+    tambahSebagaiPeserta();
+
     if (roles.isKatim) {
         bagian.push(`(${A}.katim_key = ? AND ${A}.status <> 'draft')`);
         params.push(user_key);
         bagian.push(`(${A}.katim_key IS NULL AND ${A}.status IN ('diajukan','disetujui','dikembalikan','terbit'))`);
-        tambahSebagaiPeserta();
-    } else if (roles.isAdminArsiparis) {
+    }
+    if (roles.isAdminArsiparis) {
         bagian.push(`${A}.status IN ('disetujui','terbit')`);
-        tambahSebagaiPeserta();
-    } else {
-        bagian.push(`${A}.user_key = ?`);
-        params.push(user_key);
-        tambahSebagaiPeserta();
     }
 
     return { sql: bagian.join(' OR '), params };
@@ -203,26 +208,30 @@ router.get('/stats', async (req, res) => {
     const { user_key } = getIdentity(req);
     const roles = roleInfo(req);
     try {
-        let data;
+        // Hitungan per status memakai klausa akses yang SAMA dengan daftar, untuk
+        // SEMUA peran — supaya akun berperan ganda (mis. user + admin_arsiparis)
+        // tetap melihat jumlah draft / ST miliknya sendiri di beranda & kartu.
+        const akses = aksesWhere(req);
+        const [rows] = await db.query(
+            `SELECT status, COUNT(*) c FROM surat_tugas WHERE (${akses.sql}) GROUP BY status`,
+            akses.params
+        );
+        const data = { draft: 0, diajukan: 0, disetujui: 0, dikembalikan: 0, terbit: 0 };
+        rows.forEach(r => { if (data[r.status] !== undefined) data[r.status] = r.c; });
+
+        // Antrean khusus peran (dipakai badge di daftar & lonceng notifikasi).
         if (roles.isKatim) {
             const [[r]] = await db.query(
                 "SELECT COUNT(*) c FROM surat_tugas WHERE status = 'diajukan' AND (katim_key = ? OR katim_key IS NULL)",
                 [user_key]
             );
-            data = { menunggu_verifikasi: r.c };
-        } else if (roles.isAdminArsiparis) {
-            const [[r]] = await db.query("SELECT COUNT(*) c FROM surat_tugas WHERE status = 'disetujui'");
-            data = { menunggu_penomoran: r.c };
-        } else {
-            // Pengguna biasa: ST miliknya + ST yang memuat dia sebagai peserta.
-            const akses = aksesWhere(req);
-            const [rows] = await db.query(
-                `SELECT status, COUNT(*) c FROM surat_tugas WHERE (${akses.sql}) GROUP BY status`,
-                akses.params
-            );
-            data = { draft: 0, diajukan: 0, disetujui: 0, dikembalikan: 0, terbit: 0 };
-            rows.forEach(r => { data[r.status] = r.c; });
+            data.menunggu_verifikasi = r.c;
         }
+        if (roles.isAdminArsiparis) {
+            const [[r]] = await db.query("SELECT COUNT(*) c FROM surat_tugas WHERE status = 'disetujui'");
+            data.menunggu_penomoran = r.c;
+        }
+
         res.json({ success: true, data });
     } catch (e) {
         console.error('❌ GET /surattugas/stats:', e);

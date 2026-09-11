@@ -49,28 +49,32 @@ export default function ContainerBeranda() {
   const roleLabel = typeof user.role === 'string' && user.role ? user.role : 'User';
   const isKatim = !!user.isKatim;
   const isAdminArsiparis = !!user.isAdminArsiparis;
-  const isUser = !isKatim && !isAdminArsiparis;
+  // Peran 'user' (boleh ikut dinas & membuat ST). Akun berperan ganda
+  // (user + katim / user + admin_arsiparis) tetap dihitung sebagai user supaya
+  // kartu ringkasan ST miliknya sendiri ikut tampil.
+  const rolesSaya = Array.isArray(user.roles) ? user.roles : [];
+  const isUser = rolesSaya.includes('user') || (!isKatim && !isAdminArsiparis);
 
   const counts = dash?.counts || {};
   const recent = dash?.recent || [];
   const trend = dash?.trend || [];
   const trendMax = Math.max(1, ...trend.map((t) => t.total || 0));
 
-  const cards = isKatim
+  const cards = isUser
     ? [
-        { key: 'diajukan', label: 'Menunggu Verifikasi', value: counts.diajukan || 0, icon: FaUserShield, to: '/surattugas' },
-        { key: 'disetujui', label: 'Disetujui', value: counts.disetujui || 0, icon: FaCheckCircle, to: '/surattugas' },
-        { key: 'terbit', label: 'Terbit', value: counts.terbit || 0, icon: FaFileSignature, to: '/surattugas' },
-      ]
-    : isAdminArsiparis
-    ? [
-        { key: 'disetujui', label: 'Menunggu Penomoran', value: counts.disetujui || 0, icon: FaStamp, to: '/surattugas' },
-        { key: 'terbit', label: 'Terbit', value: counts.terbit || 0, icon: FaFileSignature, to: '/surattugas' },
-      ]
-    : [
         { key: 'draft', label: 'Draft', value: counts.draft || 0, icon: FaFileSignature, to: '/surattugas' },
         { key: 'diajukan', label: 'Menunggu Verifikasi', value: counts.diajukan || 0, icon: FaUserShield, to: '/surattugas' },
         { key: 'disetujui', label: 'Disetujui', value: counts.disetujui || 0, icon: FaCheckCircle, to: '/surattugas' },
+        { key: 'terbit', label: 'Terbit', value: counts.terbit || 0, icon: FaFileSignature, to: '/surattugas' },
+      ]
+    : isKatim
+    ? [
+        { key: 'diajukan', label: 'Menunggu Verifikasi', value: counts.diajukan || 0, icon: FaUserShield, to: '/surattugas' },
+        { key: 'disetujui', label: 'Disetujui', value: counts.disetujui || 0, icon: FaCheckCircle, to: '/surattugas' },
+        { key: 'terbit', label: 'Terbit', value: counts.terbit || 0, icon: FaFileSignature, to: '/surattugas' },
+      ]
+    : [
+        { key: 'disetujui', label: 'Menunggu Penomoran', value: counts.disetujui || 0, icon: FaStamp, to: '/surattugas' },
         { key: 'terbit', label: 'Terbit', value: counts.terbit || 0, icon: FaFileSignature, to: '/surattugas' },
       ];
 
@@ -80,11 +84,11 @@ export default function ContainerBeranda() {
     { key: 'disetujui', label: 'Disetujui', count: counts.disetujui || 0, desc: 'Siap diberi nomor' },
     { key: 'terbit', label: 'Terbit', count: counts.terbit || 0, desc: 'Nomor ST diterbitkan' },
   ];
-  const flowSteps = isKatim
+  const flowSteps = isUser
+    ? allFlow
+    : isKatim
     ? allFlow.filter((s) => s.key !== 'draft')
-    : isAdminArsiparis
-    ? allFlow.filter((s) => s.key === 'disetujui' || s.key === 'terbit')
-    : allFlow;
+    : allFlow.filter((s) => s.key === 'disetujui' || s.key === 'terbit');
 
   if (loading) {
     return (

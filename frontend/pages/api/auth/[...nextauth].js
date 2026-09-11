@@ -122,6 +122,11 @@ export const authOptions = {
       session.user.isKatim = userRoles.includes('katim');
       session.user.isMt = userRoles.includes('mt');
       session.user.isAdminArsiparis = userRoles.includes('admin_arsiparis');
+      // Penanda peran 'user' (boleh ikut dinas & membuat Surat Tugas sendiri).
+      // Dipakai agar akun BERPERAN GANDA — mis. user + admin_arsiparis — tetap
+      // bisa membuat ST; sebelumnya tombolnya hilang karena aturannya hanya
+      // "bukan katim & bukan admin arsiparis".
+      session.user.isUser = userRoles.includes('user');
 
       session.accessToken = token.accessToken;
       session.idToken = token.idToken;

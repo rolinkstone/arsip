@@ -23,7 +23,16 @@ export default function SuratTugasList() {
   const user = session?.user || {};
   const isKatim = !!user.isKatim;
   const isAdminArsiparis = !!user.isAdminArsiparis;
-  const canCreate = !isKatim && !isAdminArsiparis;
+  // SIAPA PUN yang sudah login boleh membuat Surat Tugas — termasuk katim &
+  // admin_arsiparis, karena orangnya juga bisa ikut dinas.
+  //   - Backend juga tidak membatasi pembuatan: POST /api/surattugas hanya
+  //     memerlukan login (kepemilikan dijaga lewat user_key).
+  //   - Yang dibedakan peran hanya ANTREAN TUGAS: verifikasi (katim) dan
+  //     penomoran (admin_arsiparis).
+  // Riwayat: dulu `canCreate = !isKatim && !isAdminArsiparis`, lalu sempat
+  // memakai syarat peran 'user' — dua-duanya membuat akun berperan ganda /
+  // admin arsiparis tidak bisa membuat ST.
+  const canCreate = true;
 
   const [list, setList] = useState([]);
   const [stats, setStats] = useState({});
@@ -110,7 +119,7 @@ export default function SuratTugasList() {
       {/* Ringkasan */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Draft', value: badgeDraft, on: statusFilter === 'draft', go: 'draft', show: !isKatim && !isAdminArsiparis },
+          { label: 'Draft', value: badgeDraft, on: statusFilter === 'draft', go: 'draft', show: canCreate },
           { label: 'Menunggu Verifikasi', value: badgeDiajukan, on: statusFilter === 'diajukan', go: 'diajukan', show: true },
           { label: isAdminArsiparis ? 'Siap Dinomori' : 'Disetujui', value: badgeDisetujui, on: statusFilter === 'disetujui', go: 'disetujui', show: true },
           { label: 'Terbit', value: stats.terbit || 0, on: statusFilter === 'terbit', go: 'terbit', show: true },
