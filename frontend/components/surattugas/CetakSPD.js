@@ -372,7 +372,14 @@ export function DokumenSPD({ data, sppd, halaman2 = true }) {
           <tr>
             <td className="no">4.</td>
             <td className="c-label">Maksud Perjalanan Dinas</td>
-            <td className="c-isi">{data.kegiatan || data.untuk || ''}</td>
+            {/* SAMA dengan kolom "Untuk" pada Surat Tugas.
+                Sebab sebelumnya SPPD memakai `data.kegiatan` lebih dulu sehingga hanya
+                tercetak "testing", sedangkan ST memakai `data.untuk` = "Mengikuti testing"
+                (FormSuratTugas mengisi `untuk` otomatis: "Mengikuti " + kegiatan) →
+                terlihat BEDA antara ST dan SPPD. Sekarang `untuk` didahulukan supaya
+                kedua dokumen berbunyi sama; kalau `untuk` kosong (ST lama/isi manual)
+                dipakai cadangan "Mengikuti <kegiatan>". */}
+            <td className="c-isi">{data.untuk || (data.kegiatan ? 'Mengikuti ' + data.kegiatan : '')}</td>
           </tr>
           <tr>
             <td className="no">5.</td>
