@@ -18,6 +18,7 @@ import {
   FaBars, FaTimes, FaHome, FaSignOutAlt, FaChevronDown,
   FaChevronLeft, FaChevronRight, FaPlus, FaSun, FaMoon, FaArchive,
   FaFileSignature, FaBookOpen, FaCog, FaStamp, FaUserTie,
+  FaRegStickyNote, FaEnvelopeOpenText,
 } from 'react-icons/fa';
 import NotifikasiBell from './NotifikasiBell';
 import { axiosInstance } from '../utils/axiosInstance';
@@ -32,6 +33,9 @@ const POLL_NOTIF_MS = 60000;
 const NAV_ITEMS = [
   { label: 'Beranda', href: '/', icon: FaHome },
   { label: 'Surat Tugas', href: '/surattugas', icon: FaFileSignature },
+  // Menu baru — judulnya sudah tampil, isinya masih dalam pengembangan.
+  { label: 'Nota Dinas', href: '/notadinas', icon: FaRegStickyNote },
+  { label: 'Surat Dinas', href: '/suratdinas', icon: FaEnvelopeOpenText },
   {
     label: 'Pengaturan',
     icon: FaCog,
