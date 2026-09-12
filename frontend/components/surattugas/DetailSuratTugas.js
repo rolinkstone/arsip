@@ -263,6 +263,12 @@ export default function DetailSuratTugas() {
                 <p className="font-semibold text-zinc-800 dark:text-zinc-100">{data.tempat_terbit || '-'}</p>
               </div>
               <div>
+                <p className="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">Kepala Balai (Penandatangan)</p>
+                <p className="font-semibold text-zinc-800 dark:text-zinc-100">
+                  {data.nama_kabalai || data.ttd_kepala_nama || '-'}
+                </p>
+              </div>
+              <div>
                 <p className="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">Mata Anggaran</p>
                 <p className="font-semibold text-zinc-800 dark:text-zinc-100">{data.mak || '-'}</p>
               </div>

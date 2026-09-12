@@ -56,3 +56,5 @@ FLUSH PRIVILEGES;
 | File | Keterangan |
 |------|------------|
 | `001_create_database.sql` | Pastikan database `bpom_arsip_surat` ada (charset utf8mb4) |
+| `008_setting_nama_kepala_balai.sql` | Seed setting `ttd_kepala_nama` — nama Kepala Balai pada cetak ST/lampiran/SPD (diatur di Pengaturan → Pejabat Penandatangan) |
+| `009_surat_tugas_nama_kabalai.sql` | Kolom `surat_tugas.nama_kabalai` — snapshot nama Kepala Balai per ST (ST terbit tetap pakai nama lama saat pimpinan berganti) |

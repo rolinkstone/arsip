@@ -19,7 +19,11 @@ const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
 // kini diisi NOMOR SURAT TUGAS (data.nomor_st), permintaan user 2026-09-11.
 const SPD_INSTANSI = 'BALAI BESAR PENGAWAS OBAT DAN MAKANAN DI PALANGKA RAYA';
 
-// Nama Kepala Balai (halaman 2 SPD) — dipakai bila field dari server belum tersedia
+// Nama Kepala Balai (halaman 2 SPD) — CADANGAN TERAKHIR saja.
+// Urutan yang dipakai saat cetak:
+//   1. data.nama_kabalai    → snapshot pada ST ini (diisi di form / migrasi 009)
+//   2. data.ttd_kepala_nama → setting global Pengaturan → Pejabat Penandatangan
+//   3. konstanta di bawah   → hanya bila keduanya kosong
 const TTD_KEPALA_NAMA = 'Ali Yudhi Hartanto, SF., Apt., MM';
 
 function tanggalPanjang(dateStr) {
@@ -515,7 +519,7 @@ export function DokumenSPD({ data, sppd, halaman2 = true }) {
                   <div>di Palangka Raya</div>
                   {/* Variabel Srikandi untuk tanda tangan Kepala Balai */}
                   <div className="ttd-pengirim">{'${ttd_pengirim1}'}</div>
-                  <div className="nama">{data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
+                  <div className="nama">{data.nama_kabalai || data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
                 </div>
               </td>
             </tr>

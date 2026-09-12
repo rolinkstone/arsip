@@ -14,6 +14,7 @@ const {
     normalizeNip, logAction
 } = require('../utils/suratHelpers');
 const { tahunDokumen, pratinjauNomorSppd, alokasiNomorSppd } = require('../utils/penomoran');
+const { bacaKepalaNama } = require('../utils/pengaturan');
 
 const INSTANSI_DEFAULT = 'Balai Besar POM di Palangka Raya';
 
@@ -44,6 +45,12 @@ async function getDetail(stId) {
     st.rencana_tgl_mulai = toSqlDate(st.rencana_tgl_mulai);
     st.rencana_tgl_selesai = toSqlDate(st.rencana_tgl_selesai);
     st.tanggal_st = toSqlDate(st.tanggal_st);
+
+    // Nama Kepala Balai GLOBAL (Pengaturan → Pejabat Penandatangan).
+    // Dipakai sebagai CADANGAN untuk ST yang belum punya snapshot sendiri
+    // (ST lama, dibuat sebelum kolom nama_kabalai ada).
+    st.ttd_kepala_nama = await bacaKepalaNama();
+
     return st;
 }
 
@@ -328,6 +335,11 @@ router.post('/', async (req, res) => {
     const rencanaMulai = toSqlDate(b.tglMulai);
     const rencanaSelesai = toSqlDate(b.tglSelesai);
 
+    // Snapshot nama Kepala Balai: dipakai nilai dari form; bila klien tidak
+    // mengirim (mis. aplikasi lama), ambil dari setting global saat ini.
+    const namaKabalai = String(b.namaKabalai || '').trim().slice(0, 150)
+        || (await bacaKepalaNama()) || null;
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
@@ -336,14 +348,15 @@ router.post('/', async (req, res) => {
             `INSERT INTO surat_tugas
                (user_key, username, kegiatan_id, kegiatan_sumber, kegiatan, mak,
                 kota_kab_kecamatan, rencana_tgl_mulai, rencana_tgl_selesai,
-                tanggal_st, tempat_terbit, untuk, menimbang_a, menimbang_b,
+                tanggal_st, tempat_terbit, nama_kabalai, untuk, menimbang_a, menimbang_b,
                 ppk_id, ppk_nama, ppk_nip, ppk_manual, tanpa_sppd, status)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft')`,
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft')`,
             [
                 user_key, username,
                 b.kegiatanId || null, b.kegiatanSumber || 'talawang', b.kegiatan || null, b.mak || null,
                 b.kota || null, rencanaMulai, rencanaSelesai,
-                toSqlDate(b.tanggalSt), b.tempatTerbit || null, b.untuk || null,
+                toSqlDate(b.tanggalSt), b.tempatTerbit || null, namaKabalai,
+                b.untuk || null,
                 b.menimbangA || null, b.menimbangB || null,
                 b.ppkId || null, b.ppkNama || null, b.ppkNip || null, b.ppkManual ? 1 : 0,
                 b.tanpaSppd ? 1 : 0
@@ -441,6 +454,14 @@ router.put('/:id', async (req, res) => {
         const tglSelesaiU = toSqlDate(b.tglSelesai ?? st.rencana_tgl_selesai);
         const tanggalStU = toSqlDate(b.tanggalSt ?? st.tanggal_st);
 
+        // Snapshot nama Kepala Balai.
+        //  - klien tidak mengirim field ini → pertahankan nilai ST yang tersimpan
+        //  - dikirim (boleh kosong) → pakai nilai baru; kosong = NULL supaya cetak
+        //    kembali memakai setting global terbaru
+        const namaKabalaiU = b.namaKabalai === undefined
+            ? (st.nama_kabalai || null)
+            : (String(b.namaKabalai).trim().slice(0, 150) || null);
+
         const conn = await db.getConnection();
         try {
             await conn.beginTransaction();
@@ -449,7 +470,7 @@ router.put('/:id', async (req, res) => {
                 `UPDATE surat_tugas SET
                     kegiatan_id = ?, kegiatan_sumber = ?, kegiatan = ?, mak = ?,
                     kota_kab_kecamatan = ?, rencana_tgl_mulai = ?, rencana_tgl_selesai = ?,
-                    tanggal_st = ?, tempat_terbit = ?, untuk = ?,
+                    tanggal_st = ?, tempat_terbit = ?, nama_kabalai = ?, untuk = ?,
                     menimbang_a = ?, menimbang_b = ?,
                     ppk_id = ?, ppk_nama = ?, ppk_nip = ?, ppk_manual = ?, tanpa_sppd = ?
                  WHERE id = ? AND user_key = ?`,
@@ -458,7 +479,7 @@ router.put('/:id', async (req, res) => {
                     b.kegiatan ?? st.kegiatan, b.mak ?? st.mak,
                     b.kota ?? st.kota_kab_kecamatan, tglMulaiU,
                     tglSelesaiU,
-                    tanggalStU, b.tempatTerbit ?? st.tempat_terbit, b.untuk ?? st.untuk,
+                    tanggalStU, b.tempatTerbit ?? st.tempat_terbit, namaKabalaiU, b.untuk ?? st.untuk,
                     b.menimbangA ?? st.menimbang_a, b.menimbangB ?? st.menimbang_b,
                     b.ppkId ?? st.ppk_id, b.ppkNama ?? st.ppk_nama, b.ppkNip ?? st.ppk_nip,
                     b.ppkManual !== undefined ? (b.ppkManual ? 1 : 0) : st.ppk_manual,

@@ -214,6 +214,8 @@ app.use('/api/keycloak', require('./routes/keycloak'));
 app.use('/api/surattugas', require('./routes/surattugas'));
 app.use('/api/dasaraturan', require('./routes/dasaraturan'));
 app.use('/api/penomoran', require('./routes/penomoran'));
+// Pengaturan pejabat penandatangan (nama Kepala Balai) — dipakai cetak ST/lampiran/SPD.
+app.use('/api/pejabat', require('./routes/pejabat'));
 // Notifikasi "perlu tindakan" (katim & admin_arsiparis). Dihitung langsung dari
 // data surat_tugas — tidak memakai tabel notifikasi sendiri.
 app.use('/api/notifikasi', require('./routes/notifikasi'));

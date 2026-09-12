@@ -1,6 +1,7 @@
 // pages/pengaturan/index.js
 // Halaman lama "/pengaturan" kini DIRELOKASI:
 //   • /pengaturan/dasaraturan  → Dasar Aturan (isi lama)
+//   • /pengaturan/pejabat      → Pejabat Penandatangan / nama Kepala Balai (khusus admin arsiparis)
 //   • /pengaturan/penomoran    → Penomoran Manual (khusus admin arsiparis)
 // File ini hanya mengalihkan agar tautan/bookmark lama tetap berfungsi.
 import { useEffect } from 'react';

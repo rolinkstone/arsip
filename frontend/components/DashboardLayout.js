@@ -17,7 +17,7 @@ import { useSession, signOut } from 'next-auth/react';
 import {
   FaBars, FaTimes, FaHome, FaSignOutAlt, FaChevronDown,
   FaChevronLeft, FaChevronRight, FaPlus, FaSun, FaMoon, FaArchive,
-  FaFileSignature, FaBookOpen, FaCog, FaStamp,
+  FaFileSignature, FaBookOpen, FaCog, FaStamp, FaUserTie,
 } from 'react-icons/fa';
 import NotifikasiBell from './NotifikasiBell';
 import { axiosInstance } from '../utils/axiosInstance';
@@ -37,6 +37,7 @@ const NAV_ITEMS = [
     icon: FaCog,
     children: [
       { label: 'Dasar Aturan', href: '/pengaturan/dasaraturan', icon: FaBookOpen },
+      { label: 'Pejabat Penandatangan', href: '/pengaturan/pejabat', icon: FaUserTie, adminOnly: true },
       { label: 'Penomoran Manual', href: '/pengaturan/penomoran', icon: FaStamp, adminOnly: true },
     ],
   },

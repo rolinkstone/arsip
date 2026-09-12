@@ -10,7 +10,11 @@ import { FaSpinner, FaFilePdf } from 'react-icons/fa';
 const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
-// Pejabat penandatangan ST — dipakai bila field dari server belum tersedia
+// Pejabat penandatangan ST — CADANGAN TERAKHIR saja.
+// Urutan yang dipakai saat cetak:
+//   1. data.nama_kabalai    → snapshot pada ST ini (diisi di form / migrasi 009)
+//   2. data.ttd_kepala_nama → setting global Pengaturan → Pejabat Penandatangan
+//   3. konstanta di bawah   → hanya bila keduanya kosong
 const TTD_KEPALA_NAMA = 'Ali Yudhi Hartanto, SF., Apt., MM';
 
 function tanggalPanjang(dateStr) {
@@ -397,7 +401,7 @@ export function DokumenST({ data }) {
               <div>Kepala Balai Besar POM Di Palangka Raya,</div>
               {/* Variabel Srikandi — di dalam kolom ttd, rata kiri, indentasi 5 spasi */}
               <div className="ttd-pengirim">{kodeTtd(data)}</div>
-              <div className="nama">{data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
+              <div className="nama">{data.nama_kabalai || data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
             </td>
           </tr>
         </tbody>
@@ -460,7 +464,7 @@ export function LampiranPeserta({ data }) {
         <div className="lamp-kotak-kanan">
           <div>Kepala Balai Besar POM Di Palangka Raya,</div>
           <div className="ttd-pengirim">{kodeTtd(data)}</div>
-          <div className="lamp-nama">{data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
+          <div className="lamp-nama">{data.nama_kabalai || data.ttd_kepala_nama || TTD_KEPALA_NAMA}</div>
         </div>
       </div>
     </div>

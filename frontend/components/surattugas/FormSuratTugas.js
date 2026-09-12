@@ -162,7 +162,13 @@ export default function FormSuratTugas() {
   const [form, setForm] = useState({
     kegiatanId: null, kegiatanSumber: 'talawang', kegiatan: '', mak: '', kota: '',
     tglMulai: '', tglSelesai: '',
-    tanggalSt: '', tempatTerbit: 'Palangka Raya', untuk: '',
+    tanggalSt: '', tempatTerbit: 'Palangka Raya',
+    // Snapshot nama Kepala Balai untuk ST ini (terisi otomatis dari
+    // Pengaturan → Pejabat Penandatangan saat membuat ST baru).
+    // Disimpan di DB, jadi ST yang sudah dibuat TIDAK berubah walau
+    // pejabat berganti (lihat migrasi 009).
+    namaKabalai: '',
+    untuk: '',
     menimbangA: MENIMBANG_A_DEFAULT, menimbangB: MENIMBANG_B_DEFAULT,
     tanpaSppd: false, // default ST dengan SPPD; true = tanpa SPPD
     ppkId: '', ppkNama: '', ppkNip: '', ppkManual: false,
@@ -261,6 +267,28 @@ export default function FormSuratTugas() {
     if (sessionStatus === 'authenticated') loadKatim();
   }, [sessionStatus, loadKatim]);
 
+  // ---------- Nama Kepala Balai (default dari Pengaturan) ----------
+  // Nilai global dipakai sebagai DEFAULT saat membuat ST BARU. Setelah ST
+  // dibuat, namanya tersimpan di ST itu sendiri sehingga tetap "nama lama"
+  // ketika pimpinan berganti.
+  const [kepalaDefault, setKepalaDefault] = useState('');
+
+  useEffect(() => {
+    if (sessionStatus !== 'authenticated') return;
+    (async () => {
+      try {
+        const res = await axiosInstance.get('/pejabat');
+        setKepalaDefault(res.data?.data?.kepala_nama || '');
+      } catch (e) { /* abaikan — biarkan kosong / diisi manual */ }
+    })();
+  }, [sessionStatus]);
+
+  // Mode TAMBAH: isi otomatis bila masih kosong (mode edit memakai snapshot ST).
+  useEffect(() => {
+    if (editId || !kepalaDefault) return;
+    setForm((f) => (f.namaKabalai ? f : { ...f, namaKabalai: kepalaDefault }));
+  }, [editId, kepalaDefault]);
+
   // Menimbang selalu diambil dari daftar global admin (read-only, tampil semua);
   // diproses ulang setelah detail ST dimuat agar global selalu menang atas snapshot lama
   useEffect(() => {
@@ -284,6 +312,8 @@ export default function FormSuratTugas() {
           kegiatan: d.kegiatan || '', mak: d.mak || '', kota: d.kota_kab_kecamatan || '',
           tglMulai: d.rencana_tgl_mulai || '', tglSelesai: d.rencana_tgl_selesai || '',
           tanggalSt: d.tanggal_st || '', tempatTerbit: d.tempat_terbit || 'Palangka Raya',
+          // Snapshot ST ini; bila belum ada (ST lama) pakai nama global sebagai tampilan awal
+          namaKabalai: d.nama_kabalai || d.ttd_kepala_nama || '',
           untuk: d.untuk || '',
           // fallback dari snapshot lama; nanti ditimpa daftar global admin (bila tersedia)
           menimbangA: d.menimbang_a || '', menimbangB: d.menimbang_b || '',
@@ -509,14 +539,15 @@ export default function FormSuratTugas() {
                 <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">
                   Hanya kegiatan berstatus{' '}
                   <b className="text-zinc-500 dark:text-zinc-400">diketahui / disetujui / selesai</b> yang
-                  ditampilkan (draft tidak dimunculkan).
+                  ditampilkan (draft tidak dimunculkan). Nominatif milik pegawai lain tetap muncul bila Anda
+                  terdaftar sebagai <b className="text-zinc-500 dark:text-zinc-400">peserta</b> di dalamnya.
                 </p>
 
                 {kegiatanSearched && !searchingKegiatan && kegiatanResults.length === 0 && !loadingDetail && (
                   <div className="mt-3 rounded-xl border border-dashed border-stone-300 dark:border-zinc-700 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
                     Tidak ada kegiatan yang cocok. Kegiatan hanya muncul bila berstatus{' '}
-                    <b>diketahui / disetujui / selesai</b>. Bila kegiatan belum muncul, isi manual pada bagian di
-                    bawah.
+                    <b>diketahui / disetujui / selesai</b> dan Anda pembuatnya atau terdaftar sebagai peserta
+                    nominatifnya. Bila kegiatan belum muncul, isi manual pada bagian di bawah.
                   </div>
                 )}
 
@@ -528,7 +559,14 @@ export default function FormSuratTugas() {
                         onClick={() => pilihKegiatan(k)}
                         className="w-full text-left px-4 py-3 hover:bg-stone-50 dark:hover:bg-zinc-800 transition-colors"
                       >
-                        <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">{k.kegiatan}</p>
+                        <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                          {k.kegiatan}
+                          {k.dari_nominatif && (
+                            <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 align-middle">
+                              nominatif orang lain
+                            </span>
+                          )}
+                        </p>
                         <p className="text-xs text-zinc-500 mt-0.5">
                           {k.kota_kab_kecamatan || ''} · {k.mak || ''}
                           {k.no_st ? ` · No ST: ${k.no_st}` : ''}
@@ -593,6 +631,16 @@ export default function FormSuratTugas() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {field('Tanggal Surat Tugas *', form.tanggalSt, (v) => set({ tanggalSt: v }), { type: 'date' })}
                   {field('Tempat Terbit', form.tempatTerbit, (v) => set({ tempatTerbit: v }))}
+                </div>
+                <div className="mt-4">
+                  {field('Nama Kepala Balai (penandatangan)', form.namaKabalai, (v) => set({ namaKabalai: v }), {
+                    placeholder: 'nama lengkap beserta gelar',
+                  })}
+                  <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Terisi otomatis dari <b>Pengaturan → Pejabat Penandatangan</b> dan bisa diubah di sini.
+                    Nama ini <b>disimpan pada ST ini</b>, jadi Surat Tugas, lampiran, dan SPD yang
+                    sudah dibuat tetap memakai nama ini walau pimpinan berganti.
+                  </p>
                 </div>
                 <div className="mt-4">
                   <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5">
