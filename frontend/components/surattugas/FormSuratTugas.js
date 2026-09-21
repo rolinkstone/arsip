@@ -183,7 +183,11 @@ export default function FormSuratTugas() {
   const [kegiatanResults, setKegiatanResults] = useState([]);
   const [searchingKegiatan, setSearchingKegiatan] = useState(false);
   const [kegiatanSearched, setKegiatanSearched] = useState(false); // sudah pernah cari (utk pesan hasil kosong)
+  const [mencariNominatifLain, setMencariNominatifLain] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  // Penanda urutan pencarian: jawaban dari pencarian LAMA diabaikan bila user
+  // sudah menekan Cari lagi (mencegah hasil lama menimpa hasil baru).
+  const urutanCariRef = useRef(0);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -350,21 +354,58 @@ export default function FormSuratTugas() {
   // (status: diketahui / disetujui / selesai). Draft dll. disembunyikan.
   const KEGIATAN_STATUS_VISIBLE = ['diketahui', 'disetujui', 'selesai'];
   const cariKegiatan = async () => {
-    if (!kegiatanQuery.trim()) return;
+    const kataKunci = kegiatanQuery.trim();
+    if (!kataKunci) return;
+    const urutan = ++urutanCariRef.current;
+
+    const saringLayak = (arr) =>
+      (arr || []).filter((k) => KEGIATAN_STATUS_VISIBLE.includes(String(k?.status || '').toLowerCase()));
+
     setSearchingKegiatan(true);
+    setMencariNominatifLain(false);
     setError('');
+
+    // ---------- Tahap 1: kegiatan milik sendiri (1 panggilan, tampil duluan) ----------
+    let hasilUtama = [];
     try {
-      const res = await axiosInstance.get('/talawang/kegiatan', { params: { search: kegiatanQuery.trim() } });
-      const semua = res.data?.data || [];
-      const list = semua.filter((k) =>
-        KEGIATAN_STATUS_VISIBLE.includes(String(k?.status || '').toLowerCase())
-      );
-      setKegiatanResults(list);
+      const res = await axiosInstance.get('/talawang/kegiatan', {
+        params: { search: kataKunci, ringkas: 1 },
+      });
+      if (urutan !== urutanCariRef.current) return; // sudah ada pencarian yang lebih baru
+      hasilUtama = saringLayak(res.data?.data);
+      setKegiatanResults(hasilUtama);
       setKegiatanSearched(true);
     } catch (e) {
-      setError(e.response?.data?.message || 'Gagal mencari kegiatan di talawang');
+      if (urutan === urutanCariRef.current) {
+        setKegiatanResults([]);
+        setKegiatanSearched(true);
+        setError(e.response?.data?.message || 'Gagal mencari kegiatan di talawang');
+      }
+      return;
     } finally {
-      setSearchingKegiatan(false);
+      if (urutan === urutanCariRef.current) setSearchingKegiatan(false);
+    }
+
+    // ---------- Tahap 2: nominatif orang lain (menyusul, tidak memblokir UI) ----------
+    // Dulu tahap ini ikut ditunggu: 1 klik Cari = sampai 22 panggilan ke talawang.
+    setMencariNominatifLain(true);
+    try {
+      const res2 = await axiosInstance.get('/talawang/kegiatan/nominatif-lain', {
+        params: { search: kataKunci, abaikan: hasilUtama.map((k) => k.id).join(',') },
+      });
+      if (urutan !== urutanCariRef.current) return;
+      const tambahan = saringLayak(res2.data?.data);
+      if (tambahan.length) {
+        setKegiatanResults((prev) => {
+          const sudah = new Set(prev.map((x) => String(x.id)));
+          return [...prev, ...tambahan.filter((x) => !sudah.has(String(x.id)))];
+        });
+      }
+    } catch (e) {
+      // Tahap 2 gagal bukan masalah: daftar utama sudah tampil.
+      console.warn('Gagal memuat nominatif orang lain:', e?.message || e);
+    } finally {
+      if (urutan === urutanCariRef.current) setMencariNominatifLain(false);
     }
   };
 
@@ -384,6 +425,10 @@ export default function FormSuratTugas() {
         untuk: d.kegiatan || '',
         ppkId: d.ppk_id || '', ppkNama: d.ppk_nama || '', ppkNip: d.ppk_nip || '', ppkManual: false,
       });
+      // Batalkan pencarian yang masih berjalan: tanpa ini, hasil "nominatif
+      // orang lain" yang telat tiba bisa muncul lagi setelah kegiatan dipilih.
+      urutanCariRef.current++;
+      setMencariNominatifLain(false);
       setKegiatanResults([]);
       setKegiatanQuery('');
       setKegiatanSearched(false);
@@ -543,11 +588,20 @@ export default function FormSuratTugas() {
                   terdaftar sebagai <b className="text-zinc-500 dark:text-zinc-400">peserta</b> di dalamnya.
                 </p>
 
-                {kegiatanSearched && !searchingKegiatan && kegiatanResults.length === 0 && !loadingDetail && (
+                {/* Pesan "tidak ada" hanya muncul setelah tahap 2 selesai,
+                    supaya tidak berkedip "kosong" padahal nominatif masih dicari. */}
+                {kegiatanSearched && !searchingKegiatan && !mencariNominatifLain && kegiatanResults.length === 0 && !loadingDetail && (
                   <div className="mt-3 rounded-xl border border-dashed border-stone-300 dark:border-zinc-700 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
                     Tidak ada kegiatan yang cocok. Kegiatan hanya muncul bila berstatus{' '}
                     <b>diketahui / disetujui / selesai</b> dan Anda pembuatnya atau terdaftar sebagai peserta
                     nominatifnya. Bila kegiatan belum muncul, isi manual pada bagian di bawah.
+                  </div>
+                )}
+
+                {mencariNominatifLain && (
+                  <div className="mt-3 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    <FaSpinner className="w-3.5 h-3.5 animate-spin" />
+                    Mencari nominatif orang lain yang memuat Anda sebagai peserta…
                   </div>
                 )}
 

@@ -51,6 +51,34 @@ const TTL_MS = 5 * 60 * 1000;
 let cacheTokenAdmin = { nilai: null, kedaluwarsa: 0 };
 const cachePeserta = new Map(); // idKegiatan -> { waktu, pegawai }
 
+// ---------- cache hasil pencarian ----------
+// Sekali klik "Cari" tadinya memanggil talawang sampai 22x (2 pencarian + 20x
+// cek nominatif). Dengan cache ini, pencarian yang sama dalam 60 detik tidak
+// memanggil talawang lagi. Pencarian admin TIDAK bergantung user, jadi
+// cache-nya dibagi untuk semua user (kata kunci yang sama = 1 panggilan).
+const TTL_CARI_MS = 60 * 1000;
+const MAKS_CACHE_CARI = 200;
+const cacheCari = new Map(); // kunci -> { waktu, data }
+
+function bacaCacheCari(kunci) {
+    const c = cacheCari.get(kunci);
+    if (!c) return null;
+    if (Date.now() - c.waktu > TTL_CARI_MS) { cacheCari.delete(kunci); return null; }
+    return c.data;
+}
+
+function simpanCacheCari(kunci, data) {
+    if (cacheCari.size >= MAKS_CACHE_CARI) {
+        // buang entri paling lama (Map menjaga urutan penyisipan)
+        const tertua = cacheCari.keys().next().value;
+        cacheCari.delete(tertua);
+    }
+    cacheCari.set(kunci, { waktu: Date.now(), data });
+}
+
+/** Batas waktu fase "cek nominatif orang lain" — supaya pencarian tidak menggantung. */
+const BATAS_NOMINATIF_MS = Number(process.env.TALAWANG_BATAS_NOMINATIF_MS) || 4000;
+
 async function ambilTokenAdmin() {
     if (cacheTokenAdmin.nilai && Date.now() < cacheTokenAdmin.kedaluwarsa) return cacheTokenAdmin.nilai;
     const token = await getAdminCliToken();
@@ -138,10 +166,77 @@ async function getTalawang(targetPath, token, params) {
     });
 }
 
+/** Pencarian daftar kegiatan ke talawang, memakai cache sebentar. */
+async function cariKegiatanTalawang(token, params, kunciCache) {
+    const tersimpan = bacaCacheCari(kunciCache);
+    if (tersimpan) return { data: tersimpan, ms: 0, dariCache: true };
+
+    const t0 = Date.now();
+    const resp = await getTalawang('/api/kegiatan', token, params);
+    const data = resp.data?.data || [];
+    simpanCacheCari(kunciCache, data);
+    return { data, ms: Date.now() - t0, dariCache: false };
+}
+
+/** Kunci cache pencarian: pencarian admin dibagi semua user, pencarian user per orang. */
+function kunciCachePencarian(params, userKey) {
+    const bagian = Object.keys(params || {})
+        .sort()
+        .map((k) => `${k}=${params[k]}`)
+        .join('&')
+        .toLowerCase();
+    return `${userKey ? `u:${userKey}` : 'admin'}|${bagian}`;
+}
+
+/**
+ * Cari kegiatan MILIK ORANG LAIN yang memuat user sebagai peserta nominatif.
+ * Dibatasi BATAS_NOMINATIF_MS supaya pencarian tidak ikut menggantung saat
+ * talawang lambat: lewat batas -> pakai hasil yang sudah selesai dicek.
+ */
+async function cariNominatifLain(req, sudahAda, params) {
+    const id = identitas(req);
+
+    const tokenAdmin = await ambilTokenAdmin();
+    const admin = await cariKegiatanTalawang(tokenAdmin, params, kunciCachePencarian(params, null));
+    const hasilAdmin = admin.data;
+
+    const kosong = { tambahan: [], jumlahKandidat: 0, jumlahAdmin: hasilAdmin.length, ms: admin.ms, timeout: false };
+    if (!id.nip && !id.nama) return kosong;
+
+    const kandidat = hasilAdmin
+        .filter((k) => k && !sudahAda.has(String(k.id)))
+        .filter((k) => STATUS_LAYAK.includes(String(k.status || '').toLowerCase()))
+        .slice(0, MAKS_PERIKSA);
+    if (!kandidat.length) return kosong;
+
+    const t0 = Date.now();
+    let timeout = false;
+    const kerja = Promise.all(kandidat.map(async (k) => {
+        const pegawai = await ambilPeserta(k.id, tokenAdmin);
+        return pegawaiCocok(pegawai, id) ? { ...k, dari_nominatif: true } : null;
+    }));
+
+    const hasil = await Promise.race([
+        kerja,
+        new Promise((r) => setTimeout(() => { timeout = true; r(null); }, BATAS_NOMINATIF_MS)),
+    ]);
+
+    const ms = Date.now() - t0;
+    if (timeout) {
+        console.warn(`⚠️ Cek nominatif lewat batas ${BATAS_NOMINATIF_MS} ms (${kandidat.length} kandidat) — hasil tambahan dilewati`);
+    }
+    return { tambahan: (hasil || []).filter(Boolean), jumlahKandidat: kandidat.length, jumlahAdmin: hasilAdmin.length, ms, timeout };
+}
+
 // ============================================================
 // GET /kegiatan — daftar kegiatan (terusan /api/kegiatan)
 // ===== ditambah: nominatif tempat user terdaftar sebagai peserta =====
 // query yang diteruskan: ?search=…&status=…
+//
+//   ?ringkas=1  -> HANYA hasil milik user sendiri (1 panggilan, cepat).
+//                  "Nominatif orang lain" menyusul lewat
+//                  GET /kegiatan/nominatif-lain.
+//   tanpa       -> perilaku lama: hasil user + nominatif orang lain sekaligus.
 // ============================================================
 router.get('/kegiatan', async (req, res) => {
     const auth = req.headers.authorization;
@@ -150,53 +245,98 @@ router.get('/kegiatan', async (req, res) => {
     }
     const tokenUser = auth.slice('Bearer '.length);
 
+    // `ringkas` hanya untuk Persuratan — jangan diteruskan ke talawang
+    const { ringkas, ...params } = req.query;
+    const modeRingkas = String(ringkas || '') === '1';
+
     // ===== 1) hasil dengan token user sendiri (perilaku lama, tidak dikurangi) =====
     let hasilUser = [];
     let errorUser = null;
+    let msUser = 0;
     try {
-        const resp = await getTalawang('/api/kegiatan', tokenUser, req.query);
-        hasilUser = resp.data?.data || [];
+        const r = await cariKegiatanTalawang(tokenUser, params, kunciCachePencarian(params, req.user?.id));
+        hasilUser = r.data;
+        msUser = r.ms;
     } catch (e) {
         errorUser = e;
     }
 
-    // ===== 2) cari lagi dengan token admin untuk menemukan nominatif orang lain =====
-    let hasilAdmin = [];
+    const label = `"${params.search || ''}"`;
+
+    if (modeRingkas) {
+        if (errorUser) return kirimErrorTalawang(res, errorUser);
+        console.log(`⏱️ /talawang/kegiatan (ringkas) ${label}: ${msUser} ms, ${hasilUser.length} hasil`);
+        return res.json({
+            success: true,
+            message: 'Daftar kegiatan berhasil diambil',
+            data: hasilUser,
+            count: hasilUser.length,
+            nominatif_menyusul: true,
+        });
+    }
+
+    // ===== 2) cari lagi dengan token admin + 3) verifikasi keanggotaan nominatif =====
+    const sudahAda = new Set(hasilUser.map((k) => String(k?.id)));
+    let tambahan = [];
+    let msNom = 0;
+    let timeout = false;
+    let adminOk = true;
+    let jumlahAdmin = 0;
     try {
-        const tokenAdmin = await ambilTokenAdmin();
-        const resp = await getTalawang('/api/kegiatan', tokenAdmin, req.query);
-        hasilAdmin = resp.data?.data || [];
+        const r = await cariNominatifLain(req, sudahAda, params);
+        tambahan = r.tambahan;
+        msNom = r.ms;
+        timeout = r.timeout;
+        jumlahAdmin = r.jumlahAdmin;
     } catch (e) {
+        adminOk = false;
         console.warn('⚠️ Pencarian talawang dengan token admin gagal:', e.response?.status || e.message);
     }
 
     // Dua-duanya gagal → sampaikan error seperti sebelumnya
-    if (errorUser && !hasilAdmin.length) return kirimErrorTalawang(res, errorUser);
-
-    // ===== 3) verifikasi keanggotaan nominatif untuk kandidat tambahan =====
-    const id = identitas(req);
-    const sudahAda = new Set(hasilUser.map((k) => String(k?.id)));
-    const kandidat = hasilAdmin
-        .filter((k) => k && !sudahAda.has(String(k.id)))
-        .filter((k) => STATUS_LAYAK.includes(String(k.status || '').toLowerCase()))
-        .slice(0, MAKS_PERIKSA);
-
-    const tambahan = [];
-    if (kandidat.length && (id.nip || id.nama)) {
-        try {
-            const tokenAdmin = await ambilTokenAdmin();
-            const dicek = await Promise.all(kandidat.map(async (k) => {
-                const pegawai = await ambilPeserta(k.id, tokenAdmin);
-                return pegawaiCocok(pegawai, id) ? { ...k, dari_nominatif: true } : null;
-            }));
-            for (const k of dicek) if (k) tambahan.push(k);
-        } catch (e) {
-            console.warn('⚠️ Verifikasi nominatif gagal:', e.message);
-        }
-    }
+    if (errorUser && (!adminOk || jumlahAdmin === 0)) return kirimErrorTalawang(res, errorUser);
 
     const data = [...hasilUser, ...tambahan];
+    console.log(`⏱️ /talawang/kegiatan ${label}: pengguna ${msUser} ms (${hasilUser.length} hasil), nominatif ${msNom} ms (${tambahan.length} tambahan${timeout ? ', TIMEOUT' : ''})`);
     res.json({ success: true, message: 'Daftar kegiatan berhasil diambil', data, count: data.length });
+});
+
+// ============================================================
+// GET /kegiatan/nominatif-lain — kegiatan MILIK ORANG LAIN yang memuat user
+// sebagai peserta nominatif. Dipanggil MENYUSUL oleh UI, supaya daftar utama
+// tidak ikut menunggu proses ini (tadinya 1 klik Cari = ±22 panggilan talawang).
+//
+//   ?search=…       kata kunci (sama seperti pencarian utama)
+//   ?abaikan=1,2,3  id kegiatan yang sudah ditampilkan UI — tidak dicek ulang
+//
+// PENTING: rute ini HARUS didaftarkan SEBELUM '/kegiatan/:id', kalau tidak
+// "nominatif-lain" akan tertangkap sebagai :id.
+// ============================================================
+router.get('/kegiatan/nominatif-lain', async (req, res) => {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, message: 'Tidak ada token untuk integrasi talawang' });
+    }
+
+    const { abaikan, ...params } = req.query;
+    const sudahAda = new Set(String(abaikan || '').split(',').map((s) => s.trim()).filter(Boolean));
+
+    try {
+        const r = await cariNominatifLain(req, sudahAda, params);
+        console.log(`⏱️ /talawang/kegiatan/nominatif-lain "${params.search || ''}": ${r.ms} ms, ${r.jumlahKandidat} kandidat -> ${r.tambahan.length} tambahan${r.timeout ? ' (TIMEOUT)' : ''}`);
+        return res.json({
+            success: true,
+            message: 'Nominatif orang lain berhasil dicek',
+            data: r.tambahan,
+            count: r.tambahan.length,
+            kandidat: r.jumlahKandidat,
+            timeout: r.timeout,
+        });
+    } catch (e) {
+        // Gagal mencari tambahan bukan alasan menggagalkan daftar utama
+        console.warn('⚠️ /kegiatan/nominatif-lain gagal:', e.response?.status || e.message);
+        return res.json({ success: true, message: 'Nominatif orang lain tidak dapat dicek', data: [], count: 0, error: true });
+    }
 });
 
 // ============================================================
