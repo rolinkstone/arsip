@@ -4,9 +4,15 @@
  *  BACKEND MINIMAL (Template Aplikasi Baru)
  * ============================================================
  *  Yang dipertahankan:
- *    - POST /api/login    → login via Keycloak (password grant)
  *    - GET  /api/health   → health check
  *    - /api/keycloak      → router utility Keycloak (satu-satunya router fitur)
+ *
+ *  CATATAN KEAMANAN (2026-09-21):
+ *  Login TIDAK lagi lewat backend. Frontend memakai NextAuth (SSO Keycloak) dan
+ *  semua panggilan API diteruskan proxy internal Next.js
+ *  (frontend/pages/api/proxy/[...path].js) yang menyisipkan header
+ *  `Authorization: Bearer <token>` dari cookie sesi httpOnly. Dengan begitu
+ *  access/refresh token tidak pernah berada di JavaScript browser.
  *
  *  Seluruh router fitur lama (aset, laporanrusak, persediaan, dll.)
  *  sudah dihapus. Tambahkan router aplikasi baru di bagian "ROUTES".
@@ -15,7 +21,6 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
-const qs = require('qs');
 const jwt = require('jsonwebtoken');
 const jwkToPem = require('jwk-to-pem');
 const axios = require('axios');
@@ -59,24 +64,19 @@ app.use(cors({
     }
 }));
 
-// ---------- Anti brute-force untuk login ----------
-// (sebelumnya /api/login bebas dicoba sebanyak apa pun)
-const rateLimit = require('express-rate-limit');
-const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,     // 15 menit
-    limit: 10,                    // 10 percobaan per IP per jendela
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, message: 'Terlalu banyak percobaan login. Silakan coba lagi dalam 15 menit.' }
-});
-app.use('/api/login', loginLimiter);
+// ---------- Anti brute-force login ----------
+// DIHAPUS bersama route POST /api/login (sekarang jawab 410). Pembatasan
+// percobaan login kembali ditangani Keycloak (brute-force detection) karena
+// backend tidak lagi memverifikasi password.
 
 // ========== KEYCLOAK CONFIG ==========
+// Catatan: backend TIDAK memakai client secret lagi. Yang dibutuhkan hanya
+// URL + realm untuk mengambil JWKS (verifikasi tanda tangan token), sedangkan
+// kredensial admin dipakai utils/keycloakHelpers.js dari config/keycloak.js.
 const KEYCLOAK_CONFIG = {
     url: process.env.KEYCLOAK_URL || process.env.KEYCLOAK_SERVER_URL || 'https://auth.bbpompky.id',
     realm: process.env.KEYCLOAK_REALM || 'master',
-    clientId: process.env.KEYCLOAK_CLIENT_ID || 'local-surat',
-    clientSecret: process.env.KEYCLOAK_CLIENT_SECRET || ''
+    clientId: process.env.KEYCLOAK_CLIENT_ID || 'local-surat'
 };
 
 const httpsAgent = new https.Agent({ rejectUnauthorized: true });
@@ -119,7 +119,9 @@ async function verifikasiToken(token) {
 }
 
 // ========== AUTH MIDDLEWARE ==========
-// Public route yang TIDAK membutuhkan token
+// Public route yang TIDAK membutuhkan token.
+// '/api/login' tetap terdaftar supaya route 410 (lihat bawah) bisa menjawab
+// tanpa token — route itu tidak lagi menerbitkan token apa pun.
 const publicRoutes = ['/api/login', '/api/health'];
 
 const authMiddleware = async (req, res, next) => {
@@ -158,50 +160,20 @@ app.get('/api/health', (req, res) => {
     res.json({ success: true, message: 'Server running', timestamp: new Date().toISOString() });
 });
 
-// ========== LOGIN (Keycloak password grant) ==========
-app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body || {};
-
-    if (!username || !password) {
-        return res.status(400).json({ success: false, message: 'Username dan password required' });
-    }
-
-    try {
-        const response = await axios.post(
-            `${KEYCLOAK_CONFIG.url}/realms/${KEYCLOAK_CONFIG.realm}/protocol/openid-connect/token`,
-            qs.stringify({
-                grant_type: 'password',
-                client_id: KEYCLOAK_CONFIG.clientId,
-                client_secret: KEYCLOAK_CONFIG.clientSecret,
-                username,
-                password,
-                scope: 'openid profile email'
-            }),
-            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, httpsAgent }
-        );
-
-        const decoded = jwt.decode(response.data.access_token);
-        res.json({
-            success: true,
-            data: {
-                access_token: response.data.access_token,
-                refresh_token: response.data.refresh_token,
-                user: {
-                    id: decoded?.sub,
-                    username: decoded?.preferred_username || username,
-                    email: decoded?.email,
-                    name: decoded?.name,
-                    roles: decoded?.realm_access?.roles || []
-                }
-            }
-        });
-    } catch (error) {
-        const status = error.response?.status === 401 ? 401 : 500;
-        res.status(status).json({
-            success: false,
-            message: error.response?.status === 401 ? 'Username atau password salah' : 'Login failed'
-        });
-    }
+// ========== LOGIN — DINONAKTIFKAN (2026-09-21) ==========
+// Route ini dulu melakukan Keycloak password grant dan mengembalikan
+// `access_token` + `refresh_token` di BODY response, sehingga token mentah
+// sampai ke JavaScript browser (bisa dibaca skrip apa pun di halaman).
+// Login sekarang hanya lewat NextAuth (frontend/pages/api/auth/[...nextauth].js)
+// yang menyimpan token di cookie sesi httpOnly.
+// Route tetap ada dan menjawab 410 supaya pemanggil lama (skrip/tool) mendapat
+// pesan yang jelas, bukan 404/401 yang membingungkan.
+app.post('/api/login', (req, res) => {
+    res.status(410).json({
+        success: false,
+        code: 'LOGIN_MOVED',
+        message: 'Login via /api/login sudah tidak dipakai. Silakan masuk lewat halaman login aplikasi (SSO Keycloak).'
+    });
 });
 
 // ========== ROUTES ==========

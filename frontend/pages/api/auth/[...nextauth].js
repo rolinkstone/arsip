@@ -91,6 +91,8 @@ export const authOptions = {
         token.role = user.role;
         token.roles = user.roles;
         token.username = user.username;
+        // Token-token berikut disimpan HANYA di cookie sesi (JWE, httpOnly).
+        // JANGAN menyalinnya ke objek `session` — objek itu dikirim ke browser.
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
         token.idToken = account.id_token;
@@ -128,9 +130,14 @@ export const authOptions = {
       // "bukan katim & bukan admin arsiparis".
       session.user.isUser = userRoles.includes('user');
 
-      session.accessToken = token.accessToken;
-      session.idToken = token.idToken;
-      session.refreshToken = token.refreshToken;
+      // PENTING: token Keycloak TIDAK ikut dikirim ke browser.
+      // accessToken/idToken/refreshToken tetap berada di cookie sesi yang
+      // terenkripsi (diisi callback `jwt` di atas) dan hanya dipakai server:
+      //   - pages/api/proxy/[...path].js -> accessToken sebagai Bearer ke backend
+      //   - events.signOut di bawah      -> idToken untuk logout SSO Keycloak
+      // Dulu tiga baris di sini menaruh token mentah pada objek sesi sehingga
+      // /api/auth/session mengembalikannya ke JS halaman (termasuk refresh
+      // token) — cookie httpOnly jadi tidak ada gunanya.
       session.clientId = process.env.KEYCLOAK_CLIENT_ID || 'local-surat';
       session.expires = token.expiresAt
         ? new Date(token.expiresAt * 1000).toISOString()

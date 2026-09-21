@@ -57,8 +57,8 @@ const shouldSkipAuthRedirect = (requestUrl = '') => {
   if (!isBrowser()) return true;
 
   const url = requestUrl || '';
-  // Endpoint login/auth backend (mis. salah password -> 401, jangan redirect)
-  if (url.includes('/api/login') || url.includes('/api/auth')) return true;
+  // Endpoint auth NextAuth (mis. salah login -> redirect, jangan ditangani di sini)
+  if (url.includes('/api/auth')) return true;
 
   // Permintaan internal Next.js (data route, asset, dll.)
   if (url.includes('/_next') || url.includes('__next')) return true;
@@ -68,6 +68,24 @@ const shouldSkipAuthRedirect = (requestUrl = '') => {
   if (path.startsWith('/login')) return true;
 
   return false;
+};
+
+/**
+ * Menghapus sisa salinan token versi LAMA.
+ * Sebelumnya komponen SessionSync menyalin access token Keycloak ke
+ * localStorage/sessionStorage key "token" agar dikirim sebagai header
+ * Authorization. Sekarang token hanya hidup di cookie sesi httpOnly dan
+ * disisipkan oleh pages/api/proxy/[...path].js, jadi salinan lama dibersihkan
+ * satu kali saat aplikasi dimuat (mis. di komputer yang dipakai bersama).
+ */
+const purgeLegacyTokens = () => {
+  if (!isBrowser()) return;
+  try {
+    localStorage.removeItem('token');
+    sessionStorage.removeItem('token');
+  } catch (err) {
+    // storage tidak tersedia — abaikan
+  }
 };
 
 /**
@@ -156,6 +174,7 @@ const installFetchInterceptor = () => {
 };
 
 export const installAuthInterceptor = () => {
+  purgeLegacyTokens();
   installAxiosInterceptor();
   installFetchInterceptor();
 };

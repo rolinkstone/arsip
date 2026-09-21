@@ -98,7 +98,12 @@ function aksesWhere(req, alias = 'surat_tugas') {
     const params = [];
     const tambahSebagaiPeserta = () => {
         if (!nipSaya) return;
-        bagian.push(`EXISTS (SELECT 1 FROM surat_tugas_peserta pp WHERE pp.surat_tugas_id = ${A}.id AND REPLACE(pp.nip, ' ', '') = ?)`);
+        // `id IN (subquery)` — BUKAN `EXISTS` yang berkorelasi. Subquery ini
+        // nilainya sama untuk semua baris ST, jadi cukup dinilai SEKALI
+        // (materialized), bukan sekali per baris ST. Dipakai bersama index
+        // idx_stp_nip_bersih (`nip_bersih` = REPLACE(nip,' ',''), migrasi 010).
+        // Uji 20.000 ST: daftar ST 169 ms → 13 ms; stats 182 ms → 2 ms.
+        bagian.push(`${A}.id IN (SELECT pp.surat_tugas_id FROM surat_tugas_peserta pp WHERE pp.nip_bersih = ?)`);
         params.push(nipSaya);
     };
 
@@ -165,9 +170,12 @@ router.get('/', async (req, res) => {
     // dilabeli sebagai peserta. Aturannya disamakan dengan aksesWhere:
     // cocokkan NIP peserta tanpa spasi dengan NIP dari username Keycloak.
     const nipSaya = nomorDariUsername(getIdentity(req).username);
+    // Sama seperti aksesWhere: `IN (subquery)` dinilai sekali (bukan EXISTS
+    // berkorelasi per baris) dan memakai index idx_stp_nip_bersih.
+    // Hasilnya 0/1 seperti EXISTS, jadi `!!r.saya_peserta` di bawah tetap benar.
     const kolomPeserta = nipSaya
-        ? `EXISTS (SELECT 1 FROM surat_tugas_peserta sp WHERE sp.surat_tugas_id = st.id
-                    AND REPLACE(sp.nip, ' ', '') = ?) AS saya_peserta`
+        ? `st.id IN (SELECT sp.surat_tugas_id FROM surat_tugas_peserta sp
+                     WHERE sp.nip_bersih = ?) AS saya_peserta`
         : '0 AS saya_peserta';
     // PENTING: parameter untuk placeholder di SELECT harus berada SEBELUM parameter WHERE.
     if (nipSaya) params.unshift(nipSaya);

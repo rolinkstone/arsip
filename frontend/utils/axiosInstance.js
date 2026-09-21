@@ -2,8 +2,15 @@
 import axios from 'axios';
 import { handleAuthFailure, isSessionFailure } from './authInterceptor';
 
+// Semua panggilan API lewat PROXY internal Next.js (/api/proxy/...), bukan
+// langsung ke backend. Token Keycloak TIDAK lagi disimpan/dibaca dari
+// localStorage/sessionStorage: token hanya hidup di cookie sesi httpOnly dan
+// disisipkan sebagai header Authorization oleh proxy di sisi server
+// (lihat pages/api/proxy/[...path].js).
+const BASE_URL_PROXY = '/api/proxy';
+
 // Buat axios instance dengan interceptor
-const createAxiosInstance = (baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5004/api') => {
+const createAxiosInstance = (baseURL = BASE_URL_PROXY) => {
   const instance = axios.create({
     baseURL,
     timeout: 30000, // 30 detik timeout
@@ -12,21 +19,6 @@ const createAxiosInstance = (baseURL = process.env.NEXT_PUBLIC_API_URL || 'http:
       'Accept': 'application/json'
     }
   });
-
-  // Request interceptor untuk menambahkan token
-  instance.interceptors.request.use(
-    (config) => {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-      return config;
-    },
-    (error) => {
-      console.error('Request interceptor error:', error);
-      return Promise.reject(error);
-    }
-  );
 
   // Response interceptor untuk handle error autentikasi
   instance.interceptors.response.use(

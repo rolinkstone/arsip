@@ -114,21 +114,25 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
   }, [router.pathname]);
 
   // ==== Logout NextAuth + Keycloak SSO ====
+  // Logout SSO Keycloak dikerjakan di SISI SERVER oleh events.signOut
+  // (pages/api/auth/[...nextauth].js) memakai idToken dari cookie sesi.
+  // Sebelumnya idToken diambil dari sesi lalu ditempel ke URL logout lewat
+  // window.location.href — token ikut masuk riwayat browser.
   const handleLogout = async () => {
     setIsLoggingOut(true);
     try {
-      await signOut({ callbackUrl: '/login', redirect: false });
-      const idToken = session?.idToken;
-      const issuer = process.env.NEXT_PUBLIC_KEYCLOAK_ISSUER;
-      const clientId = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || 'local-surat';
-      const origin = window.location.origin;
-
-      if (idToken && issuer) {
-        const keycloakLogoutUrl = `${issuer}/protocol/openid-connect/logout?id_token_hint=${idToken}&post_logout_redirect_uri=${origin}/login&client_id=${clientId}`;
-        window.location.href = keycloakLogoutUrl;
-      } else {
-        window.location.href = '/login';
+      // Bersihkan sisa token versi lama (dulu disimpan di storage) supaya
+      // tidak tertinggal di komputer yang dipakai bersama.
+      try {
+        localStorage.removeItem('token');
+        sessionStorage.removeItem('token');
+      } catch (err) {
+        // storage tidak tersedia — abaikan
       }
+
+      // signOut menghapus cookie sesi (httpOnly) dan memicu events.signOut
+      // (logout SSO Keycloak), lalu mengarahkan ke /login.
+      await signOut({ callbackUrl: '/login', redirect: true });
     } catch (error) {
       console.error('Logout error:', error);
       window.location.href = '/login';

@@ -33,6 +33,10 @@ export default withAuth(
         const publicPaths = [
           '/login',
           '/api/auth',
+          // Proxy API menjalankan penjagaannya sendiri: tanpa cookie sesi yang
+          // sah ia membalas 401 JSON (bukan redirect ke /login), sehingga
+          // utils/authInterceptor.js tetap bisa mengenali sesi berakhir.
+          '/api/proxy',
           '/_next',
           '/favicon.ico',
           '/images',

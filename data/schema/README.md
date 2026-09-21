@@ -58,3 +58,4 @@ FLUSH PRIVILEGES;
 | `001_create_database.sql` | Pastikan database `bpom_arsip_surat` ada (charset utf8mb4) |
 | `008_setting_nama_kepala_balai.sql` | Seed setting `ttd_kepala_nama` — nama Kepala Balai pada cetak ST/lampiran/SPD (diatur di Pengaturan → Pejabat Penandatangan) |
 | `009_surat_tugas_nama_kabalai.sql` | Kolom `surat_tugas.nama_kabalai` — snapshot nama Kepala Balai per ST (ST terbit tetap pakai nama lama saat pimpinan berganti) |
+| `010_index_kinerja_query.sql` | Index hasil audit EXPLAIN: kolom generated `surat_tugas_peserta.nip_bersih` + `idx_stp_nip_bersih`, `surat_tugas.idx_st_created`, `surat_tugas.idx_st_katim_status`. **File ini memakai `USE surat_bbpompky;`**, berbeda dari `001`–`009` — sejak 2026-09-21 nama database di local dan production sudah sama |
