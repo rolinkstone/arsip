@@ -18,11 +18,26 @@ const JENIS_META = {
   verifikasi: {
     icon: FaCheckDouble,
     label: 'Menunggu verifikasi',
+    kode: 'ST',
     kelas: 'text-amber-600 dark:text-amber-400',
   },
   penomoran: {
     icon: FaStamp,
     label: 'Menunggu nomor ST',
+    kode: 'ST',
+    kelas: 'text-emerald-600 dark:text-emerald-400',
+  },
+  // Modul Nota Dinas — alur sama dengan Surat Tugas.
+  nd_verifikasi: {
+    icon: FaCheckDouble,
+    label: 'Nota dinas menunggu verifikasi',
+    kode: 'ND',
+    kelas: 'text-amber-600 dark:text-amber-400',
+  },
+  nd_penomoran: {
+    icon: FaStamp,
+    label: 'Nota dinas menunggu nomor',
+    kode: 'ND',
     kelas: 'text-emerald-600 dark:text-emerald-400',
   },
 };
@@ -46,6 +61,11 @@ export default function NotifikasiBell({ items = [], loading = false }) {
   }, []);
 
   const jumlah = items.length;
+  // Daftar tujuan tombol bawah: ikuti jenis dokumen pada item pertama
+  // (item Surat Tugas selalu didahulukan di backend).
+  const itemPertama = items[0];
+  const keNotaDinas = String(itemPertama?.jenis || '').startsWith('nd_');
+  const daftarUrl = keNotaDinas ? '/notadinas' : '/surattugas';
 
   return (
     <div className="relative" ref={boxRef}>
@@ -54,7 +74,7 @@ export default function NotifikasiBell({ items = [], loading = false }) {
         onClick={() => setOpen((v) => !v)}
         className="relative text-zinc-500 hover:text-zinc-900 hover:bg-stone-100 dark:text-zinc-400 dark:hover:text-amber-300 dark:hover:bg-zinc-800 rounded-lg p-2 transition-colors"
         aria-label={`Notifikasi${jumlah ? ` (${jumlah} perlu tindakan)` : ''}`}
-        title={jumlah ? `${jumlah} surat tugas menunggu tindakan` : 'Tidak ada yang menunggu tindakan'}
+        title={jumlah ? `${jumlah} dokumen menunggu tindakan` : 'Tidak ada yang menunggu tindakan'}
       >
         <FaBell className="w-4 h-4" />
         {jumlah > 0 && (
@@ -75,7 +95,7 @@ export default function NotifikasiBell({ items = [], loading = false }) {
 
           {jumlah === 0 ? (
             <p className="px-4 py-6 text-sm text-center text-zinc-400 dark:text-zinc-500">
-              Tidak ada surat tugas yang menunggu tindakan Anda.
+              Tidak ada dokumen yang menunggu tindakan Anda.
             </p>
           ) : (
             <ul className="divide-y divide-stone-100 dark:divide-zinc-800">
@@ -92,7 +112,7 @@ export default function NotifikasiBell({ items = [], loading = false }) {
                       <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${meta.kelas}`} />
                       <span className="min-w-0 flex-1">
                         <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-                          {meta.label} · ST #{it.id}{it.nomor_st ? ` · ${it.nomor_st}` : ''}
+                          {meta.label} · {meta.kode || 'ST'} #{it.id}{(it.nomor_st || it.nomor_nd) ? ` · ${it.nomor_st || it.nomor_nd}` : ''}
                         </span>
                         <span className="block text-sm text-zinc-800 dark:text-zinc-100 leading-snug mt-0.5">
                           {it.pesan}
@@ -113,10 +133,10 @@ export default function NotifikasiBell({ items = [], loading = false }) {
 
           <button
             type="button"
-            onClick={() => { setOpen(false); router.push('/surattugas'); }}
+            onClick={() => { setOpen(false); router.push(daftarUrl); }}
             className="w-full px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-stone-50 dark:hover:bg-zinc-800/60 border-t border-stone-200 dark:border-zinc-800 transition-colors"
           >
-            Buka daftar Surat Tugas
+            Buka daftar {keNotaDinas ? 'Nota Dinas' : 'Surat Tugas'}
           </button>
         </div>
       )}

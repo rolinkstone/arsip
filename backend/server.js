@@ -193,6 +193,10 @@ app.use('/api/pejabat', require('./routes/pejabat'));
 app.use('/api/notifikasi', require('./routes/notifikasi'));
 app.use('/api/talawang', require('./routes/talawang'));
 
+// ===== MODUL NOTA DINAS =====
+// Alur & akses meniru Surat Tugas (draft → diajukan → verifikasi katim → penomoran).
+app.use('/api/notadinas', require('./routes/notadinas'));
+
 // ========== 404 HANDLER ==========
 app.use((req, res) => {
     res.status(404).json({ success: false, message: `Route ${req.path} tidak ditemukan` });
@@ -214,6 +218,7 @@ app.listen(PORT, () => {
     - GET   /api/health
     - GET   /api/keycloak/*
     - GET/POST /api/surattugas/*
+    - GET/POST /api/notadinas/*
     - GET     /api/dasaraturan/*
     - GET     /api/talawang/*
     ════════════════════════════════════════

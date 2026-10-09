@@ -3,17 +3,22 @@
 // Base URL: /api/notifikasi
 //
 // SENGAJA TIDAK memakai tabel notifikasi sendiri — daftar ini DIHITUNG
-// langsung dari tabel surat_tugas. Alasannya:
+// langsung dari tabel surat_tugas & nota_dinas. Alasannya:
 //   - tidak pernah basi: begitu ST diverifikasi / diberi nomor, notifikasinya
 //     otomatis hilang (tidak ada notifikasi "hantu" yang tertinggal);
 //   - tidak perlu migrasi tabel baru & tidak perlu penanda "sudah dibaca".
 //
-// Isi notifikasi (sama dengan aturan badge di GET /surattugas/stats supaya konsisten):
-//   - katim           : ST berstatus 'diajukan' yang ditujukan kepadanya
-//                       (+ ST lama yang katim_key-nya NULL, sama seperti aksesWhere)
-//   - admin_arsiparis : ST berstatus 'disetujui' yang belum diberi nomor ST
+// Isi notifikasi (sama dengan aturan badge di GET /surattugas/stats dan
+// GET /notadinas/stats supaya konsisten):
+//   - katim           : ST/ND berstatus 'diajukan' yang ditujukan kepadanya
+//                       (+ dokumen lama yang katim_key-nya NULL, sama seperti aksesWhere)
+//   - admin_arsiparis : ST/ND berstatus 'disetujui' yang belum diberi nomor
 //
 // Role lain tidak mendapat notifikasi (daftar kosong) — bukan error.
+//
+// Sejak Modul Nota Dinas ada, route ini menghitung DUA sumber (surat_tugas dan
+// nota_dinas). `jenis` membedakannya: 'verifikasi'/'penomoran' untuk ST,
+// 'nd_verifikasi'/'nd_penomoran' untuk Nota Dinas.
 // ============================================================
 const express = require('express');
 const router = express.Router();
@@ -83,6 +88,51 @@ router.get('/', async (req, res) => {
                     waktuTeks: waktuIndo(r.tgl_verifikasi),
                     catatan: '',
                     url: `/surattugas?id=${r.id}`
+                });
+            });
+        }
+
+        // ---- 3. Katim: NOTA DINAS yang menunggu DIVERIFIKASI ----
+        if (roles.isKatim) {
+            const [rows] = await db.query(
+                `SELECT id, nomor_nd, hal, username, tgl_ajukan, katim_key
+                   FROM nota_dinas
+                  WHERE status = 'diajukan' AND (katim_key = ? OR katim_key IS NULL)
+                  ORDER BY (tgl_ajukan IS NULL), tgl_ajukan ASC, id ASC`,
+                [user_key]
+            );
+            rows.forEach((r) => {
+                items.push({
+                    id: r.id,
+                    jenis: 'nd_verifikasi',
+                    judul: 'Nota dinas menunggu verifikasi Anda',
+                    pesan: `Diajukan oleh ${r.username || 'pengguna'} — ${r.hal || '(tanpa hal)'}`,
+                    waktu: r.tgl_ajukan,
+                    waktuTeks: waktuIndo(r.tgl_ajukan),
+                    catatan: r.katim_key ? '' : 'Belum ditujukan ke katim tertentu',
+                    url: `/notadinas?id=${r.id}`
+                });
+            });
+        }
+
+        // ---- 4. Admin arsiparis: NOTA DINAS yang menunggu DIBERI NOMOR ----
+        if (roles.isAdminArsiparis) {
+            const [rows] = await db.query(
+                `SELECT id, nomor_nd, hal, verifikator_nama, tgl_verifikasi
+                   FROM nota_dinas
+                  WHERE status = 'disetujui'
+                  ORDER BY (tgl_verifikasi IS NULL), tgl_verifikasi ASC, id ASC`
+            );
+            rows.forEach((r) => {
+                items.push({
+                    id: r.id,
+                    jenis: 'nd_penomoran',
+                    judul: 'Nota dinas menunggu diberi nomor',
+                    pesan: `Disetujui ${r.verifikator_nama || 'katim'} — ${r.hal || '(tanpa hal)'}`,
+                    waktu: r.tgl_verifikasi,
+                    waktuTeks: waktuIndo(r.tgl_verifikasi),
+                    catatan: '',
+                    url: `/notadinas?id=${r.id}`
                 });
             });
         }

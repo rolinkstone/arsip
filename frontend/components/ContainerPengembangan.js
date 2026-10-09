@@ -1,7 +1,8 @@
 // components/ContainerPengembangan.js
 // Placeholder untuk modul yang BELUM selesai.
-// Dipakai oleh menu "Nota Dinas" & "Surat Dinas" supaya judul menu sudah
-// tampil di sidebar, sementara isi halamannya masih dalam pengembangan.
+// Dipakai oleh menu "Surat Dinas" supaya judul menu sudah tampil di sidebar,
+// sementara isi halamannya masih dalam pengembangan.
+// (Modul "Nota Dinas" sudah selesai — lihat components/notadinas/.)
 import { FaTools } from 'react-icons/fa';
 
 export default function ContainerPengembangan({ judul, deskripsi, icon: Icon = FaTools }) {

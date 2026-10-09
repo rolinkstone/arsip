@@ -33,7 +33,6 @@ const POLL_NOTIF_MS = 60000;
 const NAV_ITEMS = [
   { label: 'Beranda', href: '/', icon: FaHome },
   { label: 'Surat Tugas', href: '/surattugas', icon: FaFileSignature },
-  // Menu baru — judulnya sudah tampil, isinya masih dalam pengembangan.
   { label: 'Nota Dinas', href: '/notadinas', icon: FaRegStickyNote },
   { label: 'Surat Dinas', href: '/suratdinas', icon: FaEnvelopeOpenText },
   {
@@ -190,7 +189,11 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
     if (adaAntreanPeran) muatNotif();
   }, [router.pathname, adaAntreanPeran, muatNotif]);
 
-  const jumlahNotif = notif.items.length;
+  // Badge "perlu tindakan" dipisah per menu: Surat Tugas ('verifikasi'/'penomoran')
+  // dan Nota Dinas ('nd_verifikasi'/'nd_penomoran') — lihat backend/routes/notifikasi.js.
+  const jenisNotifND = (it) => String(it?.jenis || '').startsWith('nd_');
+  const jumlahNotifST = notif.items.filter((it) => !jenisNotifND(it)).length;
+  const jumlahNotifND = notif.items.filter(jenisNotifND).length;
 
   const today = new Date().toLocaleDateString('id-ID', {
     weekday: 'long',
@@ -264,9 +267,12 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
 
               // ---- menu biasa (tanpa submenu) ----
               if (!children.length) {
-                // Badge "perlu tindakan" hanya pada menu Surat Tugas.
+                // Badge "perlu tindakan" pada menu Surat Tugas & Nota Dinas.
                 // Sidebar mengecil: cukup titik merah di pojok ikon.
-                const badgeMenu = item.href === '/surattugas' && adaAntreanPeran ? jumlahNotif : 0;
+                const badgeMenu = !adaAntreanPeran ? 0
+                  : item.href === '/surattugas' ? jumlahNotifST
+                  : item.href === '/notadinas' ? jumlahNotifND
+                  : 0;
                 return (
                   <Link
                     key={item.href}
@@ -290,7 +296,7 @@ export default function DashboardLayout({ children, pageTitle = 'Beranda' }) {
                       ) : (
                         <span
                           className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center"
-                          title={`${badgeMenu} surat tugas menunggu tindakan`}
+                          title={`${badgeMenu} dokumen menunggu tindakan`}
                         >
                           {badgeMenu > 99 ? '99+' : badgeMenu}
                         </span>
