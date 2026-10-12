@@ -249,9 +249,11 @@ router.post('/', async (req, res) => {
     const baca = bacaPayload(req.body || {});
     if (baca.error) return res.status(400).json({ success: false, message: baca.error });
 
-    // Snapshot nama Kepala Balai (default dari Pengaturan bila klien tidak mengirim).
+    // Snapshot nama Kepala Balai & penandatangan (default dari Pengaturan bila klien tidak mengirim).
     const nilai = baca.nilai;
-    if (!nilai.nama_kabalai) nilai.nama_kabalai = (await bacaKepalaNama()) || null;
+    const kepalaNama = (await bacaKepalaNama()) || null;
+    if (!nilai.nama_kabalai) nilai.nama_kabalai = kepalaNama;
+    if (!nilai.penandatangan_nama) nilai.penandatangan_nama = kepalaNama;
 
     try {
         const conn = await db.getConnection();
@@ -303,8 +305,11 @@ router.put('/:id', async (req, res) => {
         }
 
         const nilai = baca.nilai;
-        // Klien tidak mengirim namaKabalai → pertahankan snapshot ND yang tersimpan.
-        const namaKabalai = nilai.nama_kabalai || nd.nama_kabalai || (await bacaKepalaNama()) || null;
+        // Klien tidak mengirim namaKabalai/penandatangan → pertahankan snapshot ND,
+        // atau ambil dari Pengaturan → Pejabat Penandatangan bila belum ada.
+        const kepalaNama = (await bacaKepalaNama()) || null;
+        const namaKabalai = nilai.nama_kabalai || nd.nama_kabalai || kepalaNama;
+        const penandatanganNama = nilai.penandatangan_nama || nd.penandatangan_nama || kepalaNama;
 
         const conn = await db.getConnection();
         try {
@@ -319,7 +324,7 @@ router.put('/:id', async (req, res) => {
                 [
                     nilai.kepada, nilai.dari, nilai.lampiran, nilai.hal, nilai.tanggal_nd,
                     nilai.tempat_terbit, nilai.isi, nilai.lampiran_isi,
-                    nilai.penandatangan_jabatan, nilai.penandatangan_nama, nilai.penandatangan_nip,
+                    nilai.penandatangan_jabatan, penandatanganNama, nilai.penandatangan_nip,
                     namaKabalai,
                     id, user_key,
                 ]

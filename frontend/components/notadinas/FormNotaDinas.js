@@ -38,8 +38,7 @@ export default function FormNotaDinas() {
   const [form, setForm] = useState({
     kepada: '', dari: '', lampiran: '-', hal: '', tanggalNd: hariIni(),
     isi: '', lampiranIsi: '', tempatTerbit: 'Palangka Raya',
-    penandatanganJabatan: '', penandatanganNama: '', penandatanganNip: '',
-    namaKabalai: '',
+    penandatanganNama: '',
   });
   const [katimList, setKatimList] = useState([]);
   const [katimLoading, setKatimLoading] = useState(false);
@@ -62,16 +61,16 @@ export default function FormNotaDinas() {
       .finally(() => setKatimLoading(false));
   }, [sessionStatus]);
 
-  // ---------- nama Kepala Balai (default dari Pengaturan, snapshot per ND) ----------
+  // ---------- nama penandatangan (default dari Pengaturan → Pejabat Penandatangan) ----------
   useEffect(() => {
     if (sessionStatus !== 'authenticated' || editId) return;
     axiosInstance
       .get('/pejabat')
       .then((r) => {
-        const kepala = r.data?.data?.kepala_nama || '';
-        setForm((f) => (f.namaKabalai ? f : { ...f, namaKabalai: kepala }));
+        const nama = r.data?.data?.kepala_nama || '';
+        setForm((f) => (f.penandatanganNama ? f : { ...f, penandatanganNama: nama }));
       })
-      .catch(() => { /* abaikan — biarkan kosong */ });
+      .catch(() => { /* abaikan — biarkan kosong / diisi manual */ });
   }, [sessionStatus, editId]);
 
   // ---------- mode edit ----------
@@ -87,11 +86,8 @@ export default function FormNotaDinas() {
           hal: d.hal || '', tanggalNd: d.tanggal_nd || '', isi: d.isi || '',
           lampiranIsi: d.lampiran_isi || '',
           tempatTerbit: d.tempat_terbit || 'Palangka Raya',
-          penandatanganJabatan: d.penandatangan_jabatan || '',
-          penandatanganNama: d.penandatangan_nama || '',
-          penandatanganNip: d.penandatangan_nip || '',
-          // Snapshot ND ini; bila belum ada (ND lama) pakai nama global sebagai tampilan awal
-          namaKabalai: d.nama_kabalai || d.ttd_kepala_nama || '',
+          // Snapshot ND ini; bila belum ada (ND lama) pakai nama penandatangan global
+          penandatanganNama: d.penandatangan_nama || d.ttd_kepala_nama || '',
         });
       } catch (e) {
         setError(e.response?.data?.message || 'Gagal memuat nota dinas');
@@ -285,37 +281,17 @@ export default function FormNotaDinas() {
 
         {/* Tanda tangan */}
         <Section icon={FaRegStickyNote} title="Penandatangan">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div>
-              <label className={kelasLabel}>Nama penandatangan</label>
-              <input
-                value={form.penandatanganNama}
-                onChange={(e) => set({ penandatanganNama: e.target.value })}
-                placeholder="Ali Yudhi Hartanto"
-                className={kelasInput}
-              />
-            </div>
-            <div>
-              <label className={kelasLabel}>Jabatan (opsional)</label>
-              <input
-                value={form.penandatanganJabatan}
-                onChange={(e) => set({ penandatanganJabatan: e.target.value })}
-                placeholder="Kepala Bagian Tata Usaha"
-                className={kelasInput}
-              />
-              <p className="mt-1 text-[11px] text-zinc-400">
-                Tercetak di atas kode tanda tangan bila diisi.
-              </p>
-            </div>
-            <div>
-              <label className={kelasLabel}>NIP (opsional)</label>
-              <input
-                value={form.penandatanganNip}
-                onChange={(e) => set({ penandatanganNip: e.target.value })}
-                placeholder="19700101 199501 1 001"
-                className={kelasInput}
-              />
-            </div>
+          <div>
+            <label className={kelasLabel}>Nama penandatangan</label>
+            <input
+              value={form.penandatanganNama}
+              onChange={(e) => set({ penandatanganNama: e.target.value })}
+              placeholder="Ali Yudhi Hartanto"
+              className={kelasInput}
+            />
+            <p className="mt-1 text-[11px] text-zinc-400">
+              Terisi otomatis dari <b>Pengaturan → Pejabat Penandatangan</b> dan bisa diubah di sini.
+            </p>
           </div>
         </Section>
       </fieldset>

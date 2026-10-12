@@ -95,10 +95,24 @@ export const CSS = `
   /* ---------- isi ---------- */
   .par { margin: 0 0 1.15em; text-align: justify; }  /* satu baris kosong antar paragraf */
 
-  /* ---------- tanda tangan ---------- */
-  .ttd { margin-top: 8mm; margin-left: 40%; text-align: left; }
+  /* ---------- tanda tangan (posisi & indentasi SAMA dengan Surat Tugas) ---------- */
+  /* Blok tanda tangan mulai 35% + indentasi 5 spasi (seluruh blok digeser ke kanan),
+     supaya nama penandatangan lebih ke kanan; baris variabel ttd_pengirim tetap
+     menjorok 5 spasi dari nama seperti pada Surat Tugas.
+     CATATAN: jangan menulis tanda dolar + kurung kurawal di komentar CSS ini
+     (CSS ini template literal JS → dianggap interpolasi). */
+  .ttd { margin-top: 8mm; margin-left: 35%; padding-left: 5ch; text-align: left; }
   .ttd-jabatan { margin-bottom: 1.15em; }
-  .ttd-kode { font-kerning: none; font-variant-ligatures: none; letter-spacing: normal; }
+  /* Baris variabel ttd_pengirim — menjorok 5 spasi dari nama, "polos"
+     (tanpa kerning/ligatur/letter-spacing). */
+  .ttd-kode {
+    padding-left: 5ch;
+    font-kerning: none;
+    font-variant-ligatures: none;
+    letter-spacing: normal;
+    word-spacing: normal;
+    text-rendering: geometricPrecision;
+  }
   .ttd-nama { margin-top: 20mm; }
 
   /* ---------- kepala halaman LAMPIRAN (kanan atas) ---------- */
@@ -218,6 +232,7 @@ function KepalaLampiran({ data }) {
 
 // ---------- blok tanda tangan ----------
 function TandaTangan({ data, grup }) {
+  const nama = data.penandatangan_nama || data.ttd_kepala_nama || '';
   return (
     <div className="ttd" data-block={grup}>
       {data.penandatangan_jabatan ? (
@@ -226,7 +241,7 @@ function TandaTangan({ data, grup }) {
       {/* Kode variabel tanda tangan Srikandi — ditulis sebagai string berkutip
           tunggal supaya TIDAK dianggap interpolasi JS/CSS. */}
       <div className="ttd-kode">{'${ttd_pengirim}'}</div>
-      {data.penandatangan_nama ? <div className="ttd-nama">{data.penandatangan_nama}</div> : null}
+      {nama ? <div className="ttd-nama">{nama}</div> : null}
     </div>
   );
 }

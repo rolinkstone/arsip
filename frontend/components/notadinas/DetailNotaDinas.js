@@ -239,7 +239,7 @@ export default function DetailNotaDinas() {
             </div>
             <div>
               <p className="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">Penandatangan</p>
-              <p className="font-semibold text-zinc-800 dark:text-zinc-100">{data.penandatangan_nama || '-'}</p>
+              <p className="font-semibold text-zinc-800 dark:text-zinc-100">{data.penandatangan_nama || data.ttd_kepala_nama || '-'}</p>
               {data.penandatangan_nip && <p className="text-xs text-zinc-400">NIP {data.penandatangan_nip}</p>}
             </div>
           </div>
